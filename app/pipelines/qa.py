@@ -10,14 +10,12 @@ from app.utils.text import find_prohibited_phrases, flesch_reading_ease
 
 LOGGER = get_logger("pipelines.qa")
 
-PROHIBITED_PHRASES = ["I think", "In my opinion", "We believe"]
-
-
 async def run_qa_pipeline(
     job_id: str,
     analysis: AnalysisResult,
     article_text: str,
     output_dir: str,
+    style_guide: Dict[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     fact_checks: List[Dict[str, Any]] = []
 
@@ -58,7 +56,7 @@ async def run_qa_pipeline(
             )
 
     readability = flesch_reading_ease(article_text)
-    prohibited = find_prohibited_phrases(article_text, PROHIBITED_PHRASES)
+    prohibited = find_prohibited_phrases(article_text, _prohibited_phrases(style_guide))
     compliance_notes = []
     if prohibited:
         compliance_notes.append(f"Prohibited phrases found: {', '.join(prohibited)}")
@@ -81,3 +79,12 @@ async def run_qa_pipeline(
         json.dump(qa_payload, handle, ensure_ascii=True, indent=2)
 
     return [{"type": "qa", "path": path, "metadata": {"score": score}}]
+
+
+def _prohibited_phrases(style_guide: Dict[str, Any] | None) -> List[str]:
+    if not style_guide:
+        return ["I think", "In my opinion", "We believe"]
+    return style_guide.get("style_guide", {}).get(
+        "prohibited_phrases",
+        ["I think", "In my opinion", "We believe"],
+    )

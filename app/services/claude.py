@@ -123,12 +123,17 @@ async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, 
     return analysis, metadata
 
 
-async def generate_video_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
+async def generate_video_script(
+    analysis: AnalysisResult,
+    style_guide: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    style_hint = _format_style_guide(style_guide)
     prompt = (
         "Create a 60-second news video script.\n\n"
         f"Source: {analysis.headline} - {analysis.category}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
+        f"{style_hint}\n"
         "Requirements:\n"
         "- Max 150 words (comfortable speaking pace)\n"
         "- Structure: Hook (5s) -> Body (45s) -> Conclusion (10s)\n"
@@ -150,12 +155,17 @@ async def generate_video_script(analysis: AnalysisResult) -> Tuple[str, Dict[str
     return script.strip(), metadata
 
 
-async def generate_podcast_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
+async def generate_podcast_script(
+    analysis: AnalysisResult,
+    style_guide: Dict[str, Any] | None = None,
+) -> Tuple[str, Dict[str, Any]]:
+    style_hint = _format_style_guide(style_guide)
     prompt = (
         "Write a 3-5 minute podcast script based on the article analysis.\n\n"
         f"Headline: {analysis.headline}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
+        f"{style_hint}\n"
         "Requirements:\n"
         "- 450-700 words\n"
         "- Friendly, informative tone\n"
@@ -172,12 +182,17 @@ async def generate_podcast_script(analysis: AnalysisResult) -> Tuple[str, Dict[s
     return script.strip(), metadata
 
 
-async def generate_social_posts(analysis: AnalysisResult) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+async def generate_social_posts(
+    analysis: AnalysisResult,
+    style_guide: Dict[str, Any] | None = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    style_hint = _format_style_guide(style_guide)
     prompt = (
         "Generate platform-specific social posts based on the article analysis.\n\n"
         f"Headline: {analysis.headline}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
+        f"{style_hint}\n"
         "Return strict JSON with keys:\n"
         "twitter_thread (list of 5-7 tweets),\n"
         "linkedin (500-700 words),\n"
@@ -203,13 +218,25 @@ def _validate_social(data: Dict[str, Any]) -> None:
         raise ClaudeError(f"Missing keys in social output: {', '.join(missing)}")
 
 
-async def generate_translation(analysis: AnalysisResult, article_text: str) -> Tuple[TranslationResult, Dict[str, Any]]:
+def _format_style_guide(style_guide: Dict[str, Any] | None) -> str:
+    if not style_guide:
+        return ""
+    return f"Style guide (HT voice): {json.dumps(style_guide, ensure_ascii=True)}"
+
+
+async def generate_translation(
+    analysis: AnalysisResult,
+    article_text: str,
+    style_guide: Dict[str, Any] | None = None,
+) -> Tuple[TranslationResult, Dict[str, Any]]:
+    style_hint = _format_style_guide(style_guide)
     prompt = (
         "Translate the full article into Hindi with cultural adaptation, not literal translation.\n"
         "Preserve named entities and proper nouns.\n\n"
         f"Headline: {analysis.headline}\n"
         f"Entities: {analysis.entities}\n\n"
         f"Article: {article_text}\n\n"
+        f"{style_hint}\n"
         "Return JSON with keys: hindi_text, notes.\n"
     )
     text, metadata = await _call_claude(
@@ -224,12 +251,17 @@ async def generate_translation(analysis: AnalysisResult, article_text: str) -> T
     return TranslationResult(hindi_text=str(data["hindi_text"]), notes=str(data.get("notes", "")) or None), metadata
 
 
-async def generate_seo_package(analysis: AnalysisResult) -> Tuple[SEOReport, Dict[str, Any]]:
+async def generate_seo_package(
+    analysis: AnalysisResult,
+    style_guide: Dict[str, Any] | None = None,
+) -> Tuple[SEOReport, Dict[str, Any]]:
+    style_hint = _format_style_guide(style_guide)
     prompt = (
         "Create an SEO package for the article.\n\n"
         f"Headline: {analysis.headline}\n"
         f"Category: {analysis.category}\n"
         f"Key Facts: {analysis.facts}\n\n"
+        f"{style_hint}\n"
         "Return JSON with keys:\n"
         "headline_variants (10 items),\n"
         "meta_descriptions (3 items, 150-160 chars),\n"

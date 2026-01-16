@@ -1,0 +1,30 @@
+{
+  "style_guide": {
+    "voice": "authoritative, neutral, fact-led",
+    "audience": "general Indian news readership",
+    "language": "Indian English",
+    "tense": "present or recent past",
+    "structure": ["headline", "lede", "context", "impact", "next"],
+    "tone_rules": [
+      "avoid speculation",
+      "attribute claims to sources",
+      "keep sentences concise"
+    ],
+    "numbers": "use digits, format INR where relevant",
+    "prohibited_phrases": ["I think", "In my opinion", "We believe"],
+    "cta": "Read full article at HT.com"
+  },
+  "social": {
+    "twitter": {"max_thread_length": 7, "max_hashtags": 2},
+    "linkedin": {"word_range": [500, 700]},
+    "instagram": {"slides": [5, 7], "max_hashtags": 10},
+    "facebook": {"word_range": [200, 300]},
+    "whatsapp": {"word_target": 150}
+  },
+  "seo": {
+    "headline_variants": 10,
+    "meta_descriptions": 3,
+    "faqs": 5,
+    "keywords": 12
+  }
+}

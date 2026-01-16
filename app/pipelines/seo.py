@@ -6,8 +6,13 @@ from app.core.models import AnalysisResult
 from app.services.claude import generate_seo_package
 
 
-async def run_seo_pipeline(job_id: str, analysis: AnalysisResult, output_dir: str) -> List[Dict[str, Any]]:
-    report, meta = await generate_seo_package(analysis)
+async def run_seo_pipeline(
+    job_id: str,
+    analysis: AnalysisResult,
+    output_dir: str,
+    style_guide: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
+    report, meta = await generate_seo_package(analysis, style_guide)
     path = os.path.join(output_dir, f"{job_id}_seo.json")
     payload = {
         "headline_variants": report.headline_variants,

@@ -15,9 +15,10 @@ async def run_translation_pipeline(
     analysis: AnalysisResult,
     article_text: str,
     output_dir: str,
+    style_guide: Dict[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     artifacts: List[Dict[str, Any]] = []
-    translation, meta = await generate_translation(analysis, article_text)
+    translation, meta = await generate_translation(analysis, article_text, style_guide)
 
     translation_path = os.path.join(output_dir, f"{job_id}_hindi.txt")
     with open(translation_path, "w", encoding="utf-8") as handle:

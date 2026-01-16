@@ -81,7 +81,7 @@ def _render_input(job_manager: JobManager) -> None:
             upload_text = uploaded.read().decode("utf-8", errors="ignore")
 
     st.write("Options")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.checkbox("Video", value=True, disabled=True)
     with col2:
@@ -90,6 +90,8 @@ def _render_input(job_manager: JobManager) -> None:
         st.checkbox("Social", value=True, disabled=True)
     with col4:
         st.checkbox("Hindi", value=True, disabled=True)
+    with col5:
+        use_style = st.checkbox("HT Flavor", value=True)
 
     if st.button("Generate Content Package", type="primary"):
         try:
@@ -97,7 +99,7 @@ def _render_input(job_manager: JobManager) -> None:
             if source_type == "paste":
                 validate_article(source_payload)
             job_id = job_manager.create_job()
-            job_manager.start_analysis(job_id, source_type, source_payload)
+            job_manager.start_analysis(job_id, source_type, source_payload, use_style)
             st.session_state.job_id = job_id
             st.experimental_rerun()
         except ValidationError as exc:

@@ -10,9 +10,14 @@ from app.utils.media import create_audiogram
 LOGGER = get_logger("pipelines.audio")
 
 
-async def run_audio_pipeline(job_id: str, analysis: AnalysisResult, output_dir: str) -> List[Dict[str, Any]]:
+async def run_audio_pipeline(
+    job_id: str,
+    analysis: AnalysisResult,
+    output_dir: str,
+    style_guide: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
     artifacts: List[Dict[str, Any]] = []
-    script, script_meta = await generate_podcast_script(analysis)
+    script, script_meta = await generate_podcast_script(analysis, style_guide)
 
     script_path = os.path.join(output_dir, f"{job_id}_podcast_script.txt")
     with open(script_path, "w", encoding="utf-8") as handle:

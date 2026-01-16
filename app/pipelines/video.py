@@ -13,9 +13,14 @@ from app.utils.retry import async_retry
 LOGGER = get_logger("pipelines.video")
 
 
-async def run_video_pipeline(job_id: str, analysis: AnalysisResult, output_dir: str) -> List[Dict[str, Any]]:
+async def run_video_pipeline(
+    job_id: str,
+    analysis: AnalysisResult,
+    output_dir: str,
+    style_guide: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
     artifacts: List[Dict[str, Any]] = []
-    script, script_meta = await generate_video_script(analysis)
+    script, script_meta = await generate_video_script(analysis, style_guide)
 
     script_path = os.path.join(output_dir, f"{job_id}_video_script.txt")
     with open(script_path, "w", encoding="utf-8") as handle:

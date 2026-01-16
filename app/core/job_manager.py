@@ -19,6 +19,7 @@ from app.services.claude import analyze_content
 from app.storage import db
 from app.utils.logging import get_logger, log_event
 from app.utils.retry import async_retry
+from app.utils.style import load_style_guide
 from app.utils.validation import validate_article
 
 LOGGER = get_logger("core.job_manager")
@@ -57,18 +58,24 @@ class JobManager:
             artifacts.append({"type": row["type"], "path": row["path"], "metadata": metadata})
         return artifacts
 
-    def start_analysis(self, job_id: str, source_type: str, source_payload: str) -> None:
+    def start_analysis(self, job_id: str, source_type: str, source_payload: str, use_style: bool) -> None:
         thread = threading.Thread(
             target=self._run_async_job,
-            args=(job_id, source_type, source_payload),
+            args=(job_id, source_type, source_payload, use_style),
             daemon=True,
         )
         thread.start()
 
-    def _run_async_job(self, job_id: str, source_type: str, source_payload: str) -> None:
-        asyncio.run(self._analyze_job(job_id, source_type, source_payload))
+    def _run_async_job(self, job_id: str, source_type: str, source_payload: str, use_style: bool) -> None:
+        asyncio.run(self._analyze_job(job_id, source_type, source_payload, use_style))
 
-    async def _analyze_job(self, job_id: str, source_type: str, source_payload: str) -> None:
+    async def _analyze_job(
+        self,
+        job_id: str,
+        source_type: str,
+        source_payload: str,
+        use_style: bool,
+    ) -> None:
         try:
             db.update_job(job_id, status="running", progress=5)
             log_event(LOGGER, "job_started", job_id=job_id)
@@ -81,17 +88,23 @@ class JobManager:
             db.insert_artifact(job_id, "analysis", _write_analysis(job_id, analysis), metadata)
             db.update_job(job_id, status="generating", progress=30)
 
+            style_guide = load_style_guide() if use_style else None
+
             pipeline_tasks = [
-                _run_pipeline(job_id, "video", run_video_pipeline(job_id, analysis, ARTIFACT_DIR)),
-                _run_pipeline(job_id, "audio", run_audio_pipeline(job_id, analysis, ARTIFACT_DIR)),
-                _run_pipeline(job_id, "social", run_social_pipeline(job_id, analysis, ARTIFACT_DIR)),
+                _run_pipeline(job_id, "video", run_video_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
+                _run_pipeline(job_id, "audio", run_audio_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
+                _run_pipeline(job_id, "social", run_social_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
                 _run_pipeline(
                     job_id,
                     "translation",
-                    run_translation_pipeline(job_id, analysis, article_text, ARTIFACT_DIR),
+                    run_translation_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
                 ),
-                _run_pipeline(job_id, "seo", run_seo_pipeline(job_id, analysis, ARTIFACT_DIR)),
-                _run_pipeline(job_id, "qa", run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR)),
+                _run_pipeline(job_id, "seo", run_seo_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
+                _run_pipeline(
+                    job_id,
+                    "qa",
+                    run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
+                ),
             ]
 
             results = await asyncio.gather(*pipeline_tasks)

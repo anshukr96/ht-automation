@@ -23,8 +23,7 @@ DEFAULT_TITLE = "HT Content Multiplier"
 
 def main() -> None:
     st.set_page_config(page_title=DEFAULT_TITLE, layout="wide")
-    st.title("HT Content Multiplier")
-    st.caption("Transform one article into 15+ content pieces in under 2 minutes.")
+    _render_header()
 
     job_manager = JobManager()
 
@@ -35,6 +34,26 @@ def main() -> None:
         return
 
     _render_input(job_manager)
+
+
+def _render_header() -> None:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.title("HT Content Multiplier")
+        st.caption("Transform one article into 15+ content pieces in under 2 minutes.")
+    with col2:
+        st.metric("Target Speed", "2 min", "300x faster")
+    _render_sidebar()
+
+
+def _render_sidebar() -> None:
+    st.sidebar.header("System Status")
+    missing = _missing_env_keys()
+    if missing:
+        st.sidebar.warning(f"Missing keys: {', '.join(missing)}")
+    else:
+        st.sidebar.success("All API keys configured.")
+    st.sidebar.info("Pipelines run in parallel with retries and cost tracking.")
 
 
 def _render_input(job_manager: JobManager) -> None:
@@ -114,8 +133,11 @@ def _render_progress(job_manager: JobManager) -> None:
             st.experimental_rerun()
         return
 
-    if job.status == "completed":
-        st.success("Content package ready.")
+    if job.status in {"completed", "completed_with_errors"}:
+        if job.status == "completed_with_errors":
+            st.warning(job.error or "Completed with errors.")
+        else:
+            st.success("Content package ready.")
         _render_dashboard(job_manager, job_id)
         if st.button("Start New Job"):
             st.session_state.job_id = None
@@ -135,6 +157,11 @@ def _select_source(paste_text: str, url_text: str, upload_text: str) -> tuple[st
 def _render_dashboard(job_manager: JobManager, job_id: str) -> None:
     artifacts = job_manager.list_artifacts(job_id)
     artifacts_by_type = {artifact["type"]: artifact for artifact in artifacts}
+    errors = [artifact for artifact in artifacts if artifact["type"].startswith("error_")]
+    if errors:
+        st.warning("Some pipelines failed. See details below.")
+        for artifact in errors:
+            st.caption(f"{artifact['type']}: {artifact.get('metadata', {}).get('error', 'Unknown error')}")
     zip_bytes = build_zip([artifact["path"] for artifact in artifacts])
     if zip_bytes:
         st.download_button("Download All", zip_bytes, file_name=f"{job_id}_package.zip")
@@ -159,17 +186,23 @@ def _render_dashboard(job_manager: JobManager, job_id: str) -> None:
 def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
     artifacts = job_manager.list_artifacts(job_id)
     types = {artifact["type"] for artifact in artifacts}
+    error_types = {artifact["type"] for artifact in artifacts if artifact["type"].startswith("error_")}
     steps = [
-        ("Analysis", {"analysis"}),
-        ("Video", {"video_branded", "video_raw"}),
-        ("Audio", {"audiogram", "audio"}),
-        ("Social", {"social"}),
-        ("Hindi", {"translation"}),
-        ("SEO", {"seo"}),
-        ("QA", {"qa"}),
+        ("Analysis", {"analysis"}, "error_analysis"),
+        ("Video", {"video_branded", "video_raw"}, "error_video"),
+        ("Audio", {"audiogram", "audio"}, "error_audio"),
+        ("Social", {"social"}, "error_social"),
+        ("Hindi", {"translation"}, "error_translation"),
+        ("SEO", {"seo"}, "error_seo"),
+        ("QA", {"qa"}, "error_qa"),
     ]
-    for label, artifact_types in steps:
-        status = "done" if types.intersection(artifact_types) else "pending"
+    for label, artifact_types, error_type in steps:
+        if error_type in error_types:
+            status = "failed"
+        elif types.intersection(artifact_types):
+            status = "done"
+        else:
+            status = "pending"
         st.write(f"{label}: {status}")
 
 
@@ -266,6 +299,22 @@ def _read_bytes(path: str) -> bytes:
         return b""
     with open(path, "rb") as handle:
         return handle.read()
+
+
+def _missing_env_keys() -> list[str]:
+    required = [
+        "ANTHROPIC_API_KEY",
+        "DID_API_KEY",
+        "DID_SOURCE_URL",
+        "ELEVENLABS_API_KEY",
+        "ELEVENLABS_VOICE_ID",
+        "BRAVE_SEARCH_API_KEY",
+    ]
+    missing = []
+    for key in required:
+        if not os.getenv(key):
+            missing.append(key)
+    return missing
 
 
 if __name__ == "__main__":

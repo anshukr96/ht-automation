@@ -94,13 +94,21 @@ class JobManager:
                 _run_pipeline(job_id, "qa", run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR)),
             ]
 
-            results = await asyncio.gather(*pipeline_tasks, return_exceptions=True)
-            errors = [res for res in results if isinstance(res, Exception)]
+            results = await asyncio.gather(*pipeline_tasks)
+            errors = [item for item in results if item]
             if errors:
-                raise errors[0]
-
-            db.update_job(job_id, status="completed", progress=100, finished=True)
-            log_event(LOGGER, "job_completed", job_id=job_id)
+                error_summary = "; ".join(errors)
+                db.update_job(
+                    job_id,
+                    status="completed_with_errors",
+                    progress=100,
+                    error=error_summary,
+                    finished=True,
+                )
+                log_event(LOGGER, "job_completed_with_errors", job_id=job_id, error=error_summary)
+            else:
+                db.update_job(job_id, status="completed", progress=100, finished=True)
+                log_event(LOGGER, "job_completed", job_id=job_id)
         except Exception as exc:
             log_event(LOGGER, "job_failed", job_id=job_id, error=str(exc))
             db.update_job(job_id, status="failed", progress=100, error=str(exc), finished=True)
@@ -125,13 +133,21 @@ def _write_analysis(job_id: str, analysis: AnalysisResult) -> str:
     return artifact_path
 
 
-async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[str, Any]]]) -> None:
+async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[str, Any]]]) -> str | None:
     log_event(LOGGER, "pipeline_start", job_id=job_id, pipeline=name)
-    artifacts = await coroutine
-    for artifact in artifacts:
-        db.insert_artifact(job_id, artifact["type"], artifact["path"], artifact["metadata"])
-    db.update_job(job_id, progress=_calculate_progress(job_id))
-    log_event(LOGGER, "pipeline_done", job_id=job_id, pipeline=name)
+    try:
+        artifacts = await coroutine
+        for artifact in artifacts:
+            db.insert_artifact(job_id, artifact["type"], artifact["path"], artifact["metadata"])
+        db.update_job(job_id, progress=_calculate_progress(job_id))
+        log_event(LOGGER, "pipeline_done", job_id=job_id, pipeline=name)
+        return None
+    except Exception as exc:
+        error_message = f"{name} pipeline failed: {exc}"
+        db.insert_artifact(job_id, f"error_{name}", "", {"error": str(exc)})
+        db.update_job(job_id, progress=_calculate_progress(job_id))
+        log_event(LOGGER, "pipeline_failed", job_id=job_id, pipeline=name, error=str(exc))
+        return error_message
 
 
 def _calculate_progress(job_id: str) -> int:

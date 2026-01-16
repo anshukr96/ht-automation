@@ -10,7 +10,10 @@ import httpx
 
 from app.core.models import AnalysisResult, Job
 from app.pipelines.audio import run_audio_pipeline
+from app.pipelines.qa import run_qa_pipeline
+from app.pipelines.seo import run_seo_pipeline
 from app.pipelines.social import run_social_pipeline
+from app.pipelines.translation import run_translation_pipeline
 from app.pipelines.video import run_video_pipeline
 from app.services.claude import analyze_content
 from app.storage import db
@@ -82,6 +85,13 @@ class JobManager:
                 _run_pipeline(job_id, "video", run_video_pipeline(job_id, analysis, ARTIFACT_DIR)),
                 _run_pipeline(job_id, "audio", run_audio_pipeline(job_id, analysis, ARTIFACT_DIR)),
                 _run_pipeline(job_id, "social", run_social_pipeline(job_id, analysis, ARTIFACT_DIR)),
+                _run_pipeline(
+                    job_id,
+                    "translation",
+                    run_translation_pipeline(job_id, analysis, article_text, ARTIFACT_DIR),
+                ),
+                _run_pipeline(job_id, "seo", run_seo_pipeline(job_id, analysis, ARTIFACT_DIR)),
+                _run_pipeline(job_id, "qa", run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR)),
             ]
 
             results = await asyncio.gather(*pipeline_tasks, return_exceptions=True)
@@ -126,8 +136,21 @@ async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[s
 
 def _calculate_progress(job_id: str) -> int:
     rows = db.fetch_artifacts(job_id)
-    completed = len({row["type"] for row in rows if row["type"] in {"video_branded", "audiogram", "social"}})
-    total = 3
+    types = {row["type"] for row in rows}
+    completed = 0
+    if "video_branded" in types or "video_raw" in types:
+        completed += 1
+    if "audiogram" in types or "audio" in types:
+        completed += 1
+    if "social" in types:
+        completed += 1
+    if "translation" in types:
+        completed += 1
+    if "seo" in types:
+        completed += 1
+    if "qa" in types:
+        completed += 1
+    total = 6
     base = 30
     return base + int((completed / total) * 60)
 

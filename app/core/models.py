@@ -17,6 +17,30 @@ class AnalysisResult:
 
 
 @dataclass
+class SEOReport:
+    headline_variants: List[str]
+    meta_descriptions: List[str]
+    faqs: List[Dict[str, str]]
+    keywords: List[str]
+    internal_links: List[str]
+
+
+@dataclass
+class TranslationResult:
+    hindi_text: str
+    notes: str | None
+
+
+@dataclass
+class QAResult:
+    score: float
+    readability: float
+    compliance_notes: List[str]
+    fact_checks: List[Dict[str, Any]]
+    plagiarism: Dict[str, Any]
+
+
+@dataclass
 class Job:
     id: str
     status: str

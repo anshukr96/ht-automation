@@ -4,7 +4,7 @@ from typing import Any, Dict, Tuple
 
 import httpx
 
-from app.core.models import AnalysisResult
+from app.core.models import AnalysisResult, SEOReport, TranslationResult
 from app.utils.logging import get_logger, log_event
 from app.utils.retry import async_retry
 
@@ -201,3 +201,75 @@ def _validate_social(data: Dict[str, Any]) -> None:
     missing = [key for key in required if key not in data]
     if missing:
         raise ClaudeError(f"Missing keys in social output: {', '.join(missing)}")
+
+
+async def generate_translation(analysis: AnalysisResult, article_text: str) -> Tuple[TranslationResult, Dict[str, Any]]:
+    prompt = (
+        "Translate the full article into Hindi with cultural adaptation, not literal translation.\n"
+        "Preserve named entities and proper nouns.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Entities: {analysis.entities}\n\n"
+        f"Article: {article_text}\n\n"
+        "Return JSON with keys: hindi_text, notes.\n"
+    )
+    text, metadata = await _call_claude(
+        prompt,
+        max_tokens=2000,
+        temperature=0.3,
+        system="You are a bilingual editor. Return strict JSON only.",
+    )
+    data = _extract_json(text)
+    if "hindi_text" not in data:
+        raise ClaudeError("Missing hindi_text in translation output")
+    return TranslationResult(hindi_text=str(data["hindi_text"]), notes=str(data.get("notes", "")) or None), metadata
+
+
+async def generate_seo_package(analysis: AnalysisResult) -> Tuple[SEOReport, Dict[str, Any]]:
+    prompt = (
+        "Create an SEO package for the article.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Category: {analysis.category}\n"
+        f"Key Facts: {analysis.facts}\n\n"
+        "Return JSON with keys:\n"
+        "headline_variants (10 items),\n"
+        "meta_descriptions (3 items, 150-160 chars),\n"
+        "faqs (5 items, each with question and answer),\n"
+        "keywords (10-15 items),\n"
+        "internal_links (3 suggestions).\n"
+    )
+    text, metadata = await _call_claude(
+        prompt,
+        max_tokens=1600,
+        temperature=0.4,
+        system="You are an SEO editor. Return strict JSON only.",
+    )
+    data = _extract_json(text)
+    required = ["headline_variants", "meta_descriptions", "faqs", "keywords", "internal_links"]
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise ClaudeError(f"Missing keys in SEO output: {', '.join(missing)}")
+    report = SEOReport(
+        headline_variants=[str(item) for item in data.get("headline_variants", [])],
+        meta_descriptions=[str(item) for item in data.get("meta_descriptions", [])],
+        faqs=[{\"question\": str(item.get(\"question\", \"\")), \"answer\": str(item.get(\"answer\", \"\"))} for item in data.get(\"faqs\", [])],
+        keywords=[str(item) for item in data.get("keywords", [])],
+        internal_links=[str(item) for item in data.get("internal_links", [])],
+    )
+    return report, metadata
+
+
+async def verify_fact(fact: str, sources: list[dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    prompt = (
+        "Verify the claim using the provided sources. Respond in JSON with keys:\n"
+        "verified (true/false), confidence (high/medium/low), sources (list of URLs).\n\n"
+        f"Claim: {fact}\n"
+        f"Sources: {sources}\n"
+    )
+    text, metadata = await _call_claude(
+        prompt,
+        max_tokens=400,
+        temperature=0.2,
+        system="You are a fact-checking assistant. Return strict JSON only.",
+    )
+    data = _extract_json(text)
+    return data, metadata

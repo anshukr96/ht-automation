@@ -6,6 +6,7 @@ from typing import Any, Dict
 import streamlit as st
 
 from app.core.job_manager import JobManager
+from app.utils.archive import build_zip
 from app.utils.validation import ValidationError, validate_article
 
 try:
@@ -100,8 +101,9 @@ def _render_progress(job_manager: JobManager) -> None:
     st.subheader("Generating Content Package")
     st.progress(job.progress)
     st.write(f"Status: {job.status}")
+    _render_progress_steps(job_manager, job_id)
 
-    if job.status in {"running", "queued"}:
+    if job.status in {"running", "queued", "generating"}:
         st.caption("Live updates every second.")
         st.markdown("<meta http-equiv='refresh' content='1'>", unsafe_allow_html=True)
 
@@ -113,8 +115,8 @@ def _render_progress(job_manager: JobManager) -> None:
         return
 
     if job.status == "completed":
-        st.success("Content analysis complete.")
-        _render_analysis(job_manager, job_id)
+        st.success("Content package ready.")
+        _render_dashboard(job_manager, job_id)
         if st.button("Start New Job"):
             st.session_state.job_id = None
             st.experimental_rerun()
@@ -130,27 +132,140 @@ def _select_source(paste_text: str, url_text: str, upload_text: str) -> tuple[st
     raise ValueError("Provide article text, URL, or upload a file.")
 
 
-def _render_analysis(job_manager: JobManager, job_id: str) -> None:
+def _render_dashboard(job_manager: JobManager, job_id: str) -> None:
     artifacts = job_manager.list_artifacts(job_id)
-    analysis_path = None
-    metadata: Dict[str, Any] = {}
-    for artifact in artifacts:
-        if artifact["type"] == "analysis":
-            analysis_path = artifact["path"]
-            metadata = artifact.get("metadata", {})
-            break
+    artifacts_by_type = {artifact["type"]: artifact for artifact in artifacts}
+    zip_bytes = build_zip([artifact["path"] for artifact in artifacts])
+    if zip_bytes:
+        st.download_button("Download All", zip_bytes, file_name=f"{job_id}_package.zip")
 
-    if not analysis_path or not os.path.exists(analysis_path):
-        st.warning("Analysis artifact not found.")
+    tabs = st.tabs(["Video", "Audio", "Social", "Hindi", "SEO", "QA", "Analysis"])
+    with tabs[0]:
+        _render_video_tab(artifacts_by_type)
+    with tabs[1]:
+        _render_audio_tab(artifacts_by_type)
+    with tabs[2]:
+        _render_social_tab(artifacts_by_type)
+    with tabs[3]:
+        _render_hindi_tab(artifacts_by_type)
+    with tabs[4]:
+        _render_seo_tab(artifacts_by_type)
+    with tabs[5]:
+        _render_qa_tab(artifacts_by_type)
+    with tabs[6]:
+        _render_analysis_tab(artifacts_by_type)
+
+
+def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
+    artifacts = job_manager.list_artifacts(job_id)
+    types = {artifact["type"] for artifact in artifacts}
+    steps = [
+        ("Analysis", {"analysis"}),
+        ("Video", {"video_branded", "video_raw"}),
+        ("Audio", {"audiogram", "audio"}),
+        ("Social", {"social"}),
+        ("Hindi", {"translation"}),
+        ("SEO", {"seo"}),
+        ("QA", {"qa"}),
+    ]
+    for label, artifact_types in steps:
+        status = "done" if types.intersection(artifact_types) else "pending"
+        st.write(f"{label}: {status}")
+
+
+def _render_video_tab(artifacts: Dict[str, Any]) -> None:
+    video = artifacts.get("video_branded") or artifacts.get("video_raw")
+    if not video:
+        st.info("Video not available yet.")
         return
+    st.video(video["path"])
+    st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
+    script = artifacts.get("video_script")
+    if script:
+        with open(script["path"], "r", encoding="utf-8") as handle:
+            st.text(handle.read())
 
-    with open(analysis_path, "r", encoding="utf-8") as handle:
-        analysis_payload = json.load(handle)
 
-    st.subheader("Structured Analysis")
-    st.json(analysis_payload)
+def _render_audio_tab(artifacts: Dict[str, Any]) -> None:
+    audio = artifacts.get("audio")
+    if not audio:
+        st.info("Audio not available yet.")
+        return
+    st.audio(audio["path"])
+    st.download_button("Download Audio", _read_bytes(audio["path"]), file_name=os.path.basename(audio["path"]))
+    audiogram = artifacts.get("audiogram")
+    if audiogram and audiogram["path"].endswith(".mp4"):
+        st.video(audiogram["path"])
+
+
+def _render_social_tab(artifacts: Dict[str, Any]) -> None:
+    social = artifacts.get("social")
+    if not social:
+        st.info("Social posts not available yet.")
+        return
+    with open(social["path"], "r", encoding="utf-8") as handle:
+        st.json(json.load(handle))
+    st.download_button(
+        "Download Social JSON",
+        _read_bytes(social["path"]),
+        file_name=os.path.basename(social["path"]),
+    )
+
+
+def _render_hindi_tab(artifacts: Dict[str, Any]) -> None:
+    translation = artifacts.get("translation")
+    if not translation:
+        st.info("Hindi translation not available yet.")
+        return
+    with open(translation["path"], "r", encoding="utf-8") as handle:
+        st.text(handle.read())
+    st.download_button(
+        "Download Hindi",
+        _read_bytes(translation["path"]),
+        file_name=os.path.basename(translation["path"]),
+    )
+    voiceover = artifacts.get("translation_audio")
+    if voiceover and voiceover["path"].endswith(".mp3"):
+        st.audio(voiceover["path"])
+
+
+def _render_seo_tab(artifacts: Dict[str, Any]) -> None:
+    seo = artifacts.get("seo")
+    if not seo:
+        st.info("SEO package not available yet.")
+        return
+    with open(seo["path"], "r", encoding="utf-8") as handle:
+        st.json(json.load(handle))
+    st.download_button("Download SEO JSON", _read_bytes(seo["path"]), file_name=os.path.basename(seo["path"]))
+
+
+def _render_qa_tab(artifacts: Dict[str, Any]) -> None:
+    qa = artifacts.get("qa")
+    if not qa:
+        st.info("QA report not available yet.")
+        return
+    with open(qa["path"], "r", encoding="utf-8") as handle:
+        st.json(json.load(handle))
+    st.download_button("Download QA JSON", _read_bytes(qa["path"]), file_name=os.path.basename(qa["path"]))
+
+
+def _render_analysis_tab(artifacts: Dict[str, Any]) -> None:
+    analysis = artifacts.get("analysis")
+    if not analysis:
+        st.info("Analysis not available.")
+        return
+    with open(analysis["path"], "r", encoding="utf-8") as handle:
+        st.json(json.load(handle))
+    metadata = analysis.get("metadata", {})
     if metadata:
         st.caption(f"Model: {metadata.get('model')} | Cost (USD): {metadata.get('cost_usd')}")
+
+
+def _read_bytes(path: str) -> bytes:
+    if not os.path.exists(path):
+        return b""
+    with open(path, "rb") as handle:
+        return handle.read()
 
 
 if __name__ == "__main__":

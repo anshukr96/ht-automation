@@ -4,11 +4,14 @@ import os
 import threading
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Tuple
+from typing import Any, Awaitable, Dict, Tuple
 
 import httpx
 
 from app.core.models import AnalysisResult, Job
+from app.pipelines.audio import run_audio_pipeline
+from app.pipelines.social import run_social_pipeline
+from app.pipelines.video import run_video_pipeline
 from app.services.claude import analyze_content
 from app.storage import db
 from app.utils.logging import get_logger, log_event
@@ -72,13 +75,20 @@ class JobManager:
             validate_article(article_text)
             db.update_job(job_id, progress=25)
             analysis, metadata = await analyze_content(article_text)
-            db.update_job(job_id, progress=80)
+            db.insert_artifact(job_id, "analysis", _write_analysis(job_id, analysis), metadata)
+            db.update_job(job_id, status="generating", progress=30)
 
-            artifact_path = os.path.join(ARTIFACT_DIR, f"{job_id}_analysis.json")
-            with open(artifact_path, "w", encoding="utf-8") as handle:
-                json.dump(_analysis_to_dict(analysis), handle, ensure_ascii=True, indent=2)
+            pipeline_tasks = [
+                _run_pipeline(job_id, "video", run_video_pipeline(job_id, analysis, ARTIFACT_DIR)),
+                _run_pipeline(job_id, "audio", run_audio_pipeline(job_id, analysis, ARTIFACT_DIR)),
+                _run_pipeline(job_id, "social", run_social_pipeline(job_id, analysis, ARTIFACT_DIR)),
+            ]
 
-            db.insert_artifact(job_id, "analysis", artifact_path, metadata)
+            results = await asyncio.gather(*pipeline_tasks, return_exceptions=True)
+            errors = [res for res in results if isinstance(res, Exception)]
+            if errors:
+                raise errors[0]
+
             db.update_job(job_id, status="completed", progress=100, finished=True)
             log_event(LOGGER, "job_completed", job_id=job_id)
         except Exception as exc:
@@ -96,6 +106,30 @@ def _analysis_to_dict(analysis: AnalysisResult) -> Dict[str, Any]:
         "entities": analysis.entities,
         "narrative_arc": analysis.narrative_arc,
     }
+
+
+def _write_analysis(job_id: str, analysis: AnalysisResult) -> str:
+    artifact_path = os.path.join(ARTIFACT_DIR, f"{job_id}_analysis.json")
+    with open(artifact_path, "w", encoding="utf-8") as handle:
+        json.dump(_analysis_to_dict(analysis), handle, ensure_ascii=True, indent=2)
+    return artifact_path
+
+
+async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[str, Any]]]) -> None:
+    log_event(LOGGER, "pipeline_start", job_id=job_id, pipeline=name)
+    artifacts = await coroutine
+    for artifact in artifacts:
+        db.insert_artifact(job_id, artifact["type"], artifact["path"], artifact["metadata"])
+    db.update_job(job_id, progress=_calculate_progress(job_id))
+    log_event(LOGGER, "pipeline_done", job_id=job_id, pipeline=name)
+
+
+def _calculate_progress(job_id: str) -> int:
+    rows = db.fetch_artifacts(job_id)
+    completed = len({row["type"] for row in rows if row["type"] in {"video_branded", "audiogram", "social"}})
+    total = 3
+    base = 30
+    return base + int((completed / total) * 60)
 
 
 async def _resolve_article_text(source_type: str, source_payload: str) -> str:

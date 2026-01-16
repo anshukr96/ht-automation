@@ -77,6 +77,29 @@ async def _post(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], float]:
     return await _request()
 
 
+async def _call_claude(prompt: str, *, max_tokens: int, temperature: float, system: str) -> Tuple[str, Dict[str, Any]]:
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": system,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    log_event(LOGGER, "claude_request", model=ANTHROPIC_MODEL)
+    response, cost = await _post(payload)
+    content_blocks = response.get("content", [])
+    if not content_blocks:
+        raise ClaudeError("Empty response from Claude")
+    text = content_blocks[0].get("text", "")
+    metadata = {
+        "model": ANTHROPIC_MODEL,
+        "usage": response.get("usage", {}),
+        "cost_usd": round(cost, 6),
+    }
+    log_event(LOGGER, "claude_response", cost_usd=metadata["cost_usd"], usage=metadata["usage"])
+    return text, metadata
+
+
 async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
     prompt = (
         "Analyze this news article and extract:\n"
@@ -89,26 +112,92 @@ async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, 
         "Return as structured JSON."
     )
 
-    payload = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": 1200,
-        "temperature": 0.2,
-        "system": "You are a newsroom analyst. Return strict JSON only.",
-        "messages": [{"role": "user", "content": prompt}],
-    }
-
-    log_event(LOGGER, "claude_request", model=ANTHROPIC_MODEL)
-    response, cost = await _post(payload)
-    content_blocks = response.get("content", [])
-    if not content_blocks:
-        raise ClaudeError("Empty response from Claude")
-    text = content_blocks[0].get("text", "")
+    text, metadata = await _call_claude(
+        prompt,
+        max_tokens=1200,
+        temperature=0.2,
+        system="You are a newsroom analyst. Return strict JSON only.",
+    )
     data = _extract_json(text)
     analysis = _validate_analysis(data)
-    metadata = {
-        "model": ANTHROPIC_MODEL,
-        "usage": response.get("usage", {}),
-        "cost_usd": round(cost, 6),
-    }
-    log_event(LOGGER, "claude_response", cost_usd=metadata["cost_usd"], usage=metadata["usage"])
     return analysis, metadata
+
+
+async def generate_video_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
+    prompt = (
+        "Create a 60-second news video script.\n\n"
+        f"Source: {analysis.headline} - {analysis.category}\n"
+        f"Key Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Requirements:\n"
+        "- Max 150 words (comfortable speaking pace)\n"
+        "- Structure: Hook (5s) -> Body (45s) -> Conclusion (10s)\n"
+        "- Conversational yet authoritative\n"
+        "- Include 1-2 key statistics or quotes\n"
+        "- End with CTA: \"Read full article at HT.com\"\n\n"
+        "Output only the script, no preamble."
+    )
+    script, metadata = await _call_claude(
+        prompt,
+        max_tokens=500,
+        temperature=0.3,
+        system="You write broadcast-ready scripts. Output plain text only.",
+    )
+    words = script.split()
+    if len(words) > 160:
+        script = " ".join(words[:150]).strip()
+        metadata["note"] = "script_trimmed"
+    return script.strip(), metadata
+
+
+async def generate_podcast_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
+    prompt = (
+        "Write a 3-5 minute podcast script based on the article analysis.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Key Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Requirements:\n"
+        "- 450-700 words\n"
+        "- Friendly, informative tone\n"
+        "- Include a brief intro and wrap-up\n"
+        "- Mention source attribution\n\n"
+        "Output only the script, no preamble."
+    )
+    script, metadata = await _call_claude(
+        prompt,
+        max_tokens=1200,
+        temperature=0.4,
+        system="You write podcast narration. Output plain text only.",
+    )
+    return script.strip(), metadata
+
+
+async def generate_social_posts(analysis: AnalysisResult) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    prompt = (
+        "Generate platform-specific social posts based on the article analysis.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Key Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Return strict JSON with keys:\n"
+        "twitter_thread (list of 5-7 tweets),\n"
+        "linkedin (500-700 words),\n"
+        "instagram (object with slides list and caption),\n"
+        "facebook (200-300 words),\n"
+        "whatsapp (150-word summary).\n"
+    )
+    text, metadata = await _call_claude(
+        prompt,
+        max_tokens=1600,
+        temperature=0.4,
+        system="You are a social editor. Return strict JSON only.",
+    )
+    data = _extract_json(text)
+    _validate_social(data)
+    return data, metadata
+
+
+def _validate_social(data: Dict[str, Any]) -> None:
+    required = ["twitter_thread", "linkedin", "instagram", "facebook", "whatsapp"]
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise ClaudeError(f"Missing keys in social output: {', '.join(missing)}")

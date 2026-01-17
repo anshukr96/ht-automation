@@ -31,7 +31,10 @@ async def run_translation_pipeline(
         try:
             audio_path = os.path.join(output_dir, f"{job_id}_hindi_voiceover.mp3")
             if use_free_providers():
-                audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path)
+                if translation.notes and "placeholder" in translation.notes.lower():
+                    raise RuntimeError("Hindi translation unavailable")
+                voice = os.getenv("LOCAL_HINDI_VOICE", "Lekha")
+                audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path, voice=voice)
             else:
                 audio_bytes, audio_meta = await text_to_speech(
                     translation.hindi_text, voice_id=os.getenv("ELEVENLABS_HINDI_VOICE_ID")

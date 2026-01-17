@@ -6,8 +6,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Awaitable, Dict, Tuple
 
-import httpx
-
 from app.core.models import AnalysisResult, Job
 from app.pipelines.audio import run_audio_pipeline
 from app.pipelines.qa import run_qa_pipeline
@@ -17,8 +15,8 @@ from app.pipelines.translation import run_translation_pipeline
 from app.pipelines.video import run_video_pipeline
 from app.services.claude import analyze_content
 from app.storage import db
+from app.utils.extract import extract_article_from_url
 from app.utils.logging import get_logger, log_event
-from app.utils.retry import async_retry
 from app.utils.style import load_style_guide
 from app.utils.validation import validate_article
 
@@ -83,6 +81,7 @@ class JobManager:
             db.update_job(job_id, progress=15)
             article_text = await _resolve_article_text(source_type, source_payload)
             validate_article(article_text)
+            db.insert_artifact(job_id, "article", _write_article(job_id, article_text), {"source": source_type})
             db.update_job(job_id, progress=25)
             analysis, metadata = await analyze_content(article_text)
             db.insert_artifact(job_id, "analysis", _write_analysis(job_id, analysis), metadata)
@@ -146,6 +145,13 @@ def _write_analysis(job_id: str, analysis: AnalysisResult) -> str:
     return artifact_path
 
 
+def _write_article(job_id: str, article_text: str) -> str:
+    artifact_path = os.path.join(ARTIFACT_DIR, f"{job_id}_article.txt")
+    with open(artifact_path, "w", encoding="utf-8") as handle:
+        handle.write(article_text)
+    return artifact_path
+
+
 async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[str, Any]]]) -> str | None:
     log_event(LOGGER, "pipeline_start", job_id=job_id, pipeline=name)
     try:
@@ -188,23 +194,7 @@ async def _resolve_article_text(source_type: str, source_payload: str) -> str:
     if source_type == "paste":
         return source_payload
     if source_type == "url":
-        return await _fetch_url_text(source_payload)
+        return await extract_article_from_url(source_payload)
     if source_type == "upload":
         return source_payload
     raise ValueError(f"Unsupported source type: {source_type}")
-
-
-async def _fetch_url_text(url: str) -> str:
-    log_event(LOGGER, "fetch_url_start", url=url)
-
-    @async_retry(attempts=3, base_delay=0.8, exceptions=(httpx.HTTPError,))
-    async def _request() -> str:
-        timeout = httpx.Timeout(20.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.text
-
-    text = await _request()
-    log_event(LOGGER, "fetch_url_complete", url=url, bytes=len(text))
-    return text

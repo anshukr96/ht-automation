@@ -8,6 +8,7 @@ from app.core.models import AnalysisResult, SEOReport, TranslationResult
 from app.utils.logging import get_logger, log_event
 from app.utils.provider import use_free_providers
 from app.services import free_llm
+from app.services.free_translate import translate_text
 from app.utils.retry import async_retry
 
 LOGGER = get_logger("services.claude")
@@ -240,6 +241,13 @@ async def generate_translation(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[TranslationResult, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
+        translated = await translate_text(article_text)
+        if translated:
+            return TranslationResult(hindi_text=translated, notes="Free translate"), {
+                "model": "free_translate",
+                "usage": {},
+                "cost_usd": 0.0,
+            }
         return free_llm.generate_translation(analysis, article_text)
     style_hint = _format_style_guide(style_guide)
     prompt = (
@@ -297,7 +305,7 @@ async def generate_seo_package(
     report = SEOReport(
         headline_variants=[str(item) for item in data.get("headline_variants", [])],
         meta_descriptions=[str(item) for item in data.get("meta_descriptions", [])],
-        faqs=[{\"question\": str(item.get(\"question\", \"\")), \"answer\": str(item.get(\"answer\", \"\"))} for item in data.get(\"faqs\", [])],
+        faqs=[{"question": str(item.get("question", "")), "answer": str(item.get("answer", ""))} for item in data.get("faqs", [])],
         keywords=[str(item) for item in data.get("keywords", [])],
         internal_links=[str(item) for item in data.get("internal_links", [])],
     )

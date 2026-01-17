@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -7,18 +8,19 @@ import streamlit as st
 
 from app.core.job_manager import JobManager
 from app.utils.archive import build_zip
+from app.utils.extract import extract_article_from_url
 from app.utils.validation import ValidationError, validate_article
+
+ROOT_DIR = Path(__file__).parent
+DEFAULT_TITLE = "HT Content Multiplier"
+DEMO_ARTICLE_PATH = ROOT_DIR / "app" / "storage" / "demo_article.txt"
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(dotenv_path=ROOT_DIR / ".env")
 except Exception:
     pass
-
-
-ROOT_DIR = Path(__file__).parent
-DEFAULT_TITLE = "HT Content Multiplier"
 
 
 def main() -> None:
@@ -50,6 +52,13 @@ def _render_sidebar() -> None:
     st.sidebar.header("System Status")
     if os.getenv("USE_FREE_PROVIDERS", "0").lower() in {"1", "true", "yes"}:
         st.sidebar.info("Free provider mode enabled.")
+    if _demo_mode_enabled():
+        st.sidebar.success("Demo mode enabled.")
+    avatar_path = os.getenv("HT_AVATAR_PATH", "")
+    if avatar_path:
+        st.sidebar.write(f"Avatar: {avatar_path} ({'ok' if os.path.exists(avatar_path) else 'missing'})")
+    else:
+        st.sidebar.write("Avatar: not set")
     missing = _missing_env_keys()
     if missing:
         st.sidebar.warning(f"Missing keys: {', '.join(missing)}")
@@ -75,6 +84,19 @@ def _render_input(job_manager: JobManager) -> None:
             placeholder="https://example.com/news/article",
         )
         st.caption("URL fetching runs in the background when you click Generate.")
+        if "preview_text" not in st.session_state:
+            st.session_state.preview_text = ""
+        if st.button("Preview URL"):
+            try:
+                st.session_state.preview_text = asyncio.run(extract_article_from_url(url_text))
+            except Exception as exc:
+                st.error(f"Preview failed: {exc}")
+        if st.session_state.preview_text:
+            st.text_area(
+                "Extracted article preview",
+                value=st.session_state.preview_text[:5000],
+                height=200,
+            )
 
     with tabs[2]:
         uploaded = st.file_uploader("Upload a .txt file", type=["txt"])
@@ -103,11 +125,16 @@ def _render_input(job_manager: JobManager) -> None:
             job_id = job_manager.create_job()
             job_manager.start_analysis(job_id, source_type, source_payload, use_style)
             st.session_state.job_id = job_id
-            st.experimental_rerun()
+            st.rerun()
         except ValidationError as exc:
             st.error(str(exc))
         except ValueError as exc:
             st.error(str(exc))
+
+    if _demo_mode_enabled():
+        st.divider()
+        if st.button("Run Demo Article"):
+            _run_demo(job_manager)
 
 
 def _render_progress(job_manager: JobManager) -> None:
@@ -127,14 +154,15 @@ def _render_progress(job_manager: JobManager) -> None:
     _render_progress_steps(job_manager, job_id)
 
     if job.status in {"running", "queued", "generating"}:
-        st.caption("Live updates every second.")
-        st.markdown("<meta http-equiv='refresh' content='1'>", unsafe_allow_html=True)
+        st.caption("Click refresh to update pipeline status.")
+        if st.button("Refresh Status"):
+            st.rerun()
 
     if job.status == "failed":
         st.error(job.error or "Unknown error")
         if st.button("Start New Job"):
             st.session_state.job_id = None
-            st.experimental_rerun()
+            st.rerun()
         return
 
     if job.status in {"completed", "completed_with_errors"}:
@@ -145,7 +173,7 @@ def _render_progress(job_manager: JobManager) -> None:
         _render_dashboard(job_manager, job_id)
         if st.button("Start New Job"):
             st.session_state.job_id = None
-            st.experimental_rerun()
+            st.rerun()
 
 
 def _select_source(paste_text: str, url_text: str, upload_text: str) -> tuple[str, str]:
@@ -324,6 +352,32 @@ def _missing_env_keys() -> list[str]:
         if not os.getenv(key):
             missing.append(key)
     return missing
+
+
+def _auto_refresh(interval_ms: int) -> None:
+    if hasattr(st, "autorefresh"):
+        st.autorefresh(interval=interval_ms, key="progress_autorefresh")
+    else:
+        seconds = max(1, int(interval_ms / 1000))
+        st.markdown(f"<meta http-equiv='refresh' content='{seconds}'>", unsafe_allow_html=True)
+
+
+def _demo_mode_enabled() -> bool:
+    return os.getenv("DEMO_MODE", "0").lower() in {"1", "true", "yes"}
+
+
+def _run_demo(job_manager: JobManager) -> None:
+    if not DEMO_ARTICLE_PATH.exists():
+        st.error("Demo article not found.")
+        return
+    with DEMO_ARTICLE_PATH.open("r", encoding="utf-8") as handle:
+        article_text = handle.read()
+    st.info("Demo mode: running with the preset article.")
+    job_id = job_manager.create_job()
+    job_manager.start_analysis(job_id, "paste", article_text, use_style=True)
+    st.session_state.job_id = job_id
+    st.session_state.demo_started = True
+    st.rerun()
 
 
 if __name__ == "__main__":

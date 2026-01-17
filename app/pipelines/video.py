@@ -6,7 +6,7 @@ import httpx
 from app.core.models import AnalysisResult
 from app.services.claude import generate_video_script
 from app.services.did import create_talk
-from app.services.free_media import generate_placeholder_video
+from app.services.free_media import generate_avatar_video, generate_placeholder_video
 from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import overlay_logo
@@ -31,7 +31,21 @@ async def run_video_pipeline(
 
     video_path = os.path.join(output_dir, f"{job_id}_video_raw.mp4")
     if use_free_providers():
-        video_path, meta = generate_placeholder_video(script, video_path)
+        avatar_path = os.getenv("HT_AVATAR_PATH")
+        voice = os.getenv("LOCAL_TTS_VOICE", "Aman")
+        log_event(
+            LOGGER,
+            "video_free_mode",
+            avatar_path=avatar_path or "",
+            avatar_exists=bool(avatar_path and os.path.exists(avatar_path)),
+            voice=voice,
+        )
+        if avatar_path and os.path.exists(avatar_path):
+            video_path, meta = generate_avatar_video(script, video_path, avatar_path=avatar_path, voice=voice)
+        else:
+            if avatar_path:
+                log_event(LOGGER, "avatar_missing", path=avatar_path)
+            video_path, meta = generate_placeholder_video(script, video_path, avatar_path=None)
         artifacts.append({"type": "video_raw", "path": video_path, "metadata": meta})
     else:
         video_url, did_meta = await create_talk(script)

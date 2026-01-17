@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+app/storage/artifacts/
+app/storage/ht_content.db
+*.log
+*.aiff
+*.mp3
+*.mp4

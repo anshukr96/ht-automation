@@ -1,3 +1,4 @@
+import os
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -101,6 +102,13 @@ def generate_social_posts(analysis: AnalysisResult) -> Tuple[Dict[str, Any], Dic
 
 
 def generate_translation(analysis: AnalysisResult, article_text: str) -> Tuple[TranslationResult, Dict[str, Any]]:
+    translated = _translate_with_argos(article_text)
+    if translated:
+        return TranslationResult(hindi_text=translated, notes="Argos Translate"), {
+            "model": "argos_translate",
+            "usage": {},
+            "cost_usd": 0.0,
+        }
     translated = "[Hindi placeholder] " + article_text
     metadata = {"model": "local_placeholder", "usage": {}, "cost_usd": 0.0}
     return TranslationResult(hindi_text=translated, notes="Offline placeholder"), metadata
@@ -192,3 +200,21 @@ def _extract_entities(text: str) -> List[str]:
         if candidate not in entities:
             entities.append(candidate)
     return entities[:12]
+
+
+def _translate_with_argos(text: str) -> str | None:
+    if os.getenv("USE_ARGOS_TRANSLATE", "0").lower() not in {"1", "true", "yes"}:
+        return None
+    try:
+        import argostranslate.package  # type: ignore
+        import argostranslate.translate  # type: ignore
+
+        installed_languages = argostranslate.translate.get_installed_languages()
+        from_lang = next((lang for lang in installed_languages if lang.code == "en"), None)
+        to_lang = next((lang for lang in installed_languages if lang.code == "hi"), None)
+        if not from_lang or not to_lang:
+            return None
+        translation = from_lang.get_translation(to_lang)
+        return translation.translate(text)
+    except Exception:
+        return None

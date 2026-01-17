@@ -28,7 +28,8 @@ async def run_audio_pipeline(
 
     audio_path = os.path.join(output_dir, f"{job_id}_podcast.mp3")
     if use_free_providers():
-        audio_path, audio_meta = generate_tts_audio(script, audio_path)
+        voice = os.getenv("LOCAL_TTS_VOICE", "Aman")
+        audio_path, audio_meta = generate_tts_audio(script, audio_path, voice=voice)
         artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
     else:
         audio_bytes, audio_meta = await text_to_speech(script)

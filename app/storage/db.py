@@ -109,7 +109,7 @@ def fetch_job(job_id: str) -> sqlite3.Row | None:
 def fetch_artifacts(job_id: str) -> list[sqlite3.Row]:
     conn = _connect()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM artifacts WHERE job_id = ?", (job_id,))
+    cur.execute("SELECT * FROM artifacts WHERE job_id = ? ORDER BY rowid ASC", (job_id,))
     rows = cur.fetchall()
     conn.close()
     return rows

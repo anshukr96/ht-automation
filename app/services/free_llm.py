@@ -1,220 +1,417 @@
-import os
+import ast
+import json
 import re
 from typing import Any, Dict, List, Tuple
 
 from app.core.models import AnalysisResult, SEOReport, TranslationResult
+from app.services.ollama import chat
+from app.utils.logging import get_logger, log_event
+
+LOGGER = get_logger("services.free_llm")
 
 
-STOPWORDS = {
-    "The",
-    "A",
-    "An",
-    "This",
-    "That",
-    "These",
-    "Those",
-    "He",
-    "She",
-    "It",
-    "They",
-    "We",
-    "You",
-    "I",
-    "In",
-    "On",
-    "At",
-    "For",
-    "With",
-    "By",
-    "From",
-    "To",
-    "As",
-    "Of",
-}
+class LocalLLMError(RuntimeError):
+    pass
 
 
-def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
-    lines = [line.strip() for line in article_text.splitlines() if line.strip()]
-    headline = lines[0] if lines else "Untitled"
-    body = " ".join(lines[1:]) if len(lines) > 1 else article_text
-    sentences = _split_sentences(body)
+def _extract_json(text: str) -> Dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise LocalLLMError("Response missing JSON payload")
+    payload = cleaned[start : end + 1]
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        payload = payload.replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+        payload = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", payload)
+        return json.loads(payload)
 
-    category = _guess_category(body)
-    tone = "urgent" if re.search(r"breaking|urgent|alert", body, re.IGNORECASE) else "neutral"
-    facts = sentences[:5]
-    quotes = _extract_quotes(body)
-    entities = _extract_entities(body)
-    narrative_arc = {
-        "setup": " ".join(sentences[:2]).strip(),
-        "conflict": sentences[len(sentences) // 2] if sentences else "",
-        "resolution": sentences[-1] if sentences else "",
-    }
 
-    analysis = AnalysisResult(
+async def _repair_json(raw: str) -> Dict[str, Any]:
+    prompt = (
+        "Fix this into strict JSON only. Do not include markdown or commentary. "
+        "Escape any newlines inside JSON strings.\n\n"
+        f"Raw:\n{raw}\n"
+    )
+    fixed, _ = await chat(
+        prompt,
+        max_tokens=800,
+        temperature=0.0,
+        system="You fix JSON. Return strict JSON only.",
+    )
+    try:
+        return _extract_json(fixed)
+    except Exception as exc:
+        log_event(LOGGER, "json_repair_failed", error=str(exc))
+        raise
+
+
+def _validate_analysis(data: Dict[str, Any]) -> AnalysisResult:
+    headline = str(data.get("headline", "")).strip()
+    category = str(data.get("category", "")).strip()
+    tone = str(data.get("tone", "")).strip()
+    if not headline or not category or not tone:
+        raise LocalLLMError("Missing required keys in analysis output")
+
+    facts = [str(item) for item in data.get("facts", []) if str(item).strip()]
+    quotes = [
+        {"quote": str(q.get("quote", "")), "speaker": str(q.get("speaker", ""))}
+        for q in data.get("quotes", [])
+        if isinstance(q, dict)
+    ]
+    entities = [str(item) for item in data.get("entities", []) if str(item).strip()]
+    narrative_arc = data.get("narrative_arc") or {}
+    if not isinstance(narrative_arc, dict):
+        narrative_arc = {}
+
+    missing = [key for key in ["facts", "quotes", "entities", "narrative_arc"] if key not in data]
+    if missing:
+        log_event(LOGGER, "analysis_missing_optional_keys", missing=missing)
+
+    return AnalysisResult(
         headline=headline,
         category=category,
         tone=tone,
         facts=facts,
         quotes=quotes,
         entities=entities,
-        narrative_arc=narrative_arc,
+        narrative_arc={
+            "setup": str(narrative_arc.get("setup", "")),
+            "conflict": str(narrative_arc.get("conflict", "")),
+            "resolution": str(narrative_arc.get("resolution", "")),
+        },
     )
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return analysis, metadata
 
 
-def generate_video_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
-    hook = f"{analysis.headline}. Here are the key developments."
-    body = " ".join(analysis.facts[:3])
-    conclusion = "Read full article at HT.com."
-    script = f"{hook} {body} {conclusion}".strip()
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return script, metadata
+def _validate_social(data: Dict[str, Any]) -> None:
+    required = ["twitter_thread", "linkedin", "instagram", "facebook", "whatsapp"]
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise LocalLLMError(f"Missing keys in social output: {', '.join(missing)}")
 
 
-def generate_podcast_script(analysis: AnalysisResult) -> Tuple[str, Dict[str, Any]]:
-    intro = f"Welcome to HT's quick briefing. Today: {analysis.headline}."
-    middle = " ".join(analysis.facts)
-    outro = "That's the update. Read full article at HT.com."
-    script = f"{intro}\n\n{middle}\n\n{outro}"
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return script, metadata
+def _validate_seo(data: Dict[str, Any]) -> SEOReport:
+    required = ["headline_variants", "meta_descriptions", "faqs", "keywords", "internal_links"]
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise LocalLLMError(f"Missing keys in SEO output: {', '.join(missing)}")
+    return SEOReport(
+        headline_variants=[str(item) for item in data.get("headline_variants", [])],
+        meta_descriptions=[str(item) for item in data.get("meta_descriptions", [])],
+        faqs=[{"question": str(item.get("question", "")), "answer": str(item.get("answer", ""))} for item in data.get("faqs", [])],
+        keywords=[str(item) for item in data.get("keywords", [])],
+        internal_links=[str(item) for item in data.get("internal_links", [])],
+    )
 
 
-def generate_social_posts(analysis: AnalysisResult) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    thread = [analysis.headline] + analysis.facts[:5]
-    linkedin = "\n\n".join([analysis.headline] + analysis.facts)
-    instagram = {
-        "slides": [analysis.headline] + analysis.facts[:4],
-        "caption": f"{analysis.headline} #HT #News",
+def _fallback_social(analysis: AnalysisResult) -> Dict[str, Any]:
+    lead = analysis.headline or "HT Update"
+    facts = analysis.facts[:5]
+    return {
+        "twitter_thread": [lead] + facts,
+        "linkedin": "\n\n".join([lead] + facts),
+        "instagram": {"slides": [lead] + facts[:4], "caption": lead},
+        "facebook": " ".join(facts[:3]),
+        "whatsapp": " ".join(facts[:2]),
     }
-    facebook = " ".join(analysis.facts[:3])
-    whatsapp = " ".join(analysis.facts[:2])
-    posts = {
-        "twitter_thread": thread[:7],
+
+
+def _normalize_social_item(item: Any) -> str:
+    if isinstance(item, dict):
+        return _format_fact(item)
+    if isinstance(item, str):
+        stripped = item.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                parsed = ast.literal_eval(stripped)
+                if isinstance(parsed, dict):
+                    return _format_fact(parsed)
+            except (ValueError, SyntaxError):
+                pass
+        return stripped
+    return str(item)
+
+
+def _format_fact(fact: Dict[str, Any]) -> str:
+    company = fact.get("company") or fact.get("entity") or ""
+    quarter = fact.get("quarter") or fact.get("period") or ""
+    date = fact.get("date") or fact.get("time") or ""
+    pieces = [str(p).strip() for p in [company, quarter, date] if str(p).strip()]
+    if pieces:
+        return " | ".join(pieces)
+    return ", ".join(f"{k}: {v}" for k, v in fact.items())
+
+
+def _normalize_social_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    thread = [_normalize_social_item(item) for item in payload.get("twitter_thread", [])]
+    linkedin = payload.get("linkedin", "")
+    if isinstance(linkedin, list):
+        linkedin = "\n\n".join(_normalize_social_item(item) for item in linkedin)
+    else:
+        linkedin = _normalize_social_item(linkedin)
+    instagram = payload.get("instagram", {}) if isinstance(payload.get("instagram"), dict) else {}
+    slides = [_normalize_social_item(item) for item in instagram.get("slides", [])]
+    caption = _normalize_social_item(instagram.get("caption", ""))
+    facebook = _normalize_social_item(payload.get("facebook", ""))
+    whatsapp = _normalize_social_item(payload.get("whatsapp", ""))
+    return {
+        "twitter_thread": thread,
         "linkedin": linkedin,
-        "instagram": instagram,
+        "instagram": {"slides": slides, "caption": caption},
         "facebook": facebook,
         "whatsapp": whatsapp,
     }
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return posts, metadata
 
 
-def generate_translation(analysis: AnalysisResult, article_text: str) -> Tuple[TranslationResult, Dict[str, Any]]:
-    translated = _translate_with_argos(article_text)
-    if translated:
-        return TranslationResult(hindi_text=translated, notes="Argos Translate"), {
-            "model": "argos_translate",
-            "usage": {},
-            "cost_usd": 0.0,
-        }
-    translated = "[Hindi placeholder] " + article_text
-    metadata = {"model": "local_placeholder", "usage": {}, "cost_usd": 0.0}
-    return TranslationResult(hindi_text=translated, notes="Offline placeholder"), metadata
-
-
-def generate_seo_package(analysis: AnalysisResult) -> Tuple[SEOReport, Dict[str, Any]]:
-    headline_variants = [
-        analysis.headline,
-        f"Explained: {analysis.headline}",
-        f"What to know: {analysis.headline}",
-        f"Top takeaways from {analysis.headline}",
-        f"Why it matters: {analysis.headline}",
-        f"5 key points on {analysis.headline}",
-        f"Latest update: {analysis.headline}",
-        f"All you need to know about {analysis.headline}",
-        f"In depth: {analysis.headline}",
-        f"HT report: {analysis.headline}",
-    ]
-    meta_descriptions = [
-        f"{analysis.headline} - key highlights, context, and what it means for readers.",
-        f"A quick breakdown of {analysis.headline} with impacts and next steps.",
-        f"HT analysis of {analysis.headline}: facts, context, and what to watch next.",
-    ]
-    faqs = [
-        {"question": f"What happened in {analysis.headline}?", "answer": analysis.facts[0] if analysis.facts else ""},
-        {"question": "Why does it matter?", "answer": analysis.narrative_arc.get("conflict", "")},
-        {"question": "What is the impact?", "answer": analysis.narrative_arc.get("resolution", "")},
-        {"question": "Who is involved?", "answer": ", ".join(analysis.entities[:5])},
-        {"question": "What happens next?", "answer": "Watch for official updates."},
-    ]
-    keywords = analysis.entities[:12]
-    internal_links = [
-        "HT Markets",
-        "HT Policy",
-        "HT Explainers",
-    ]
-    report = SEOReport(
-        headline_variants=headline_variants,
-        meta_descriptions=meta_descriptions,
-        faqs=faqs,
-        keywords=keywords,
-        internal_links=internal_links,
+def _fallback_seo(analysis: AnalysisResult) -> SEOReport:
+    headline = analysis.headline or "HT Report"
+    return SEOReport(
+        headline_variants=[headline],
+        meta_descriptions=[f"{headline} - HT summary."],
+        faqs=[{"question": f"What happened in {headline}?", "answer": analysis.facts[0] if analysis.facts else ""}],
+        keywords=analysis.entities[:10],
+        internal_links=["HT Markets", "HT Policy", "HT Explainers"],
     )
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return report, metadata
 
 
-def verify_fact(fact: str, sources: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    verification = {
-        "verified": False,
-        "confidence": "low",
-        "sources": [],
-    }
-    metadata = {"model": "local_heuristic", "usage": {}, "cost_usd": 0.0}
-    return verification, metadata
-
-
-def _split_sentences(text: str) -> List[str]:
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    return [s.strip() for s in sentences if s.strip()]
-
-
-def _guess_category(text: str) -> str:
-    lower = text.lower()
-    if any(word in lower for word in ["stock", "market", "ipo", "shares", "sebi"]):
-        return "Markets"
-    if any(word in lower for word in ["policy", "government", "ministry", "parliament"]):
-        return "Policy"
-    if any(word in lower for word in ["tech", "startup", "ai", "software"]):
-        return "Technology"
-    if any(word in lower for word in ["sport", "match", "cricket", "football"]):
-        return "Sports"
-    return "News"
-
-
-def _extract_quotes(text: str) -> List[Dict[str, str]]:
-    quotes = []
-    for match in re.findall(r"\"([^\"]+)\"", text):
-        quotes.append({"quote": match, "speaker": ""})
-    return quotes[:5]
-
-
-def _extract_entities(text: str) -> List[str]:
-    candidates = re.findall(r"\b[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\b", text)
-    entities = []
-    for candidate in candidates:
-        if candidate in STOPWORDS:
-            continue
-        if candidate not in entities:
-            entities.append(candidate)
-    return entities[:12]
-
-
-def _translate_with_argos(text: str) -> str | None:
-    if os.getenv("USE_ARGOS_TRANSLATE", "0").lower() not in {"1", "true", "yes"}:
-        return None
+async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
+    prompt = (
+        "Analyze this news article and extract:\n"
+        "1. Headline, category, tone (neutral/urgent/investigative)\n"
+        "2. Key facts (list all verifiable claims)\n"
+        "3. Key quotes (with attribution)\n"
+        "4. Named entities (people, places, organizations)\n"
+        "5. Narrative arc (setup, conflict, resolution)\n\n"
+        f"Article: {article_text}\n\n"
+        "Return as structured JSON."
+    )
+    text, metadata = await chat(
+        prompt,
+        max_tokens=1200,
+        temperature=0.2,
+        system="You are a newsroom analyst. Return strict JSON only.",
+    )
     try:
-        import argostranslate.package  # type: ignore
-        import argostranslate.translate  # type: ignore
-
-        installed_languages = argostranslate.translate.get_installed_languages()
-        from_lang = next((lang for lang in installed_languages if lang.code == "en"), None)
-        to_lang = next((lang for lang in installed_languages if lang.code == "hi"), None)
-        if not from_lang or not to_lang:
-            return None
-        translation = from_lang.get_translation(to_lang)
-        return translation.translate(text)
+        data = _extract_json(text)
     except Exception:
-        return None
+        data = await _repair_json(text)
+    analysis = _validate_analysis(data)
+    if not analysis.facts or not analysis.entities:
+        repair_prompt = (
+            "Extract missing fields from the article. Return JSON with keys: facts, quotes, entities, narrative_arc.\n\n"
+            f"Article: {article_text}\n"
+        )
+        try:
+            repaired, _ = await chat(
+                repair_prompt,
+                max_tokens=800,
+                temperature=0.2,
+                system="You are a newsroom analyst. Return strict JSON only.",
+            )
+            repaired_data = _extract_json(repaired)
+            analysis = _validate_analysis({**data, **repaired_data})
+        except Exception as exc:
+            log_event(LOGGER, "analysis_repair_failed", error=str(exc))
+    return analysis, metadata
+
+
+async def generate_video_script(analysis: AnalysisResult, *, style_variant: int = 0) -> Tuple[str, Dict[str, Any]]:
+    prompt = (
+        "Write a 3-minute news anchor script for a video segment.\n\n"
+        f"Source: {analysis.headline} - {analysis.category}\n"
+        f"Key Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Requirements:\n"
+        "- 420-520 words (3+ minutes at 140-160 wpm)\n"
+        "- Professional, confident anchor voice\n"
+        "- No section labels like Hook/Body/Conclusion\n"
+        "- No stage directions, just spoken narration\n"
+        "- Include 1-2 statistics or quotes\n"
+        "- End with CTA: \"Read full article at HT.com\"\n\n"
+        "Output only the script."
+    )
+    script, metadata = await chat(
+        prompt,
+        max_tokens=1200,
+        temperature=0.3,
+        system="You are a live news anchor. Output plain narration only.",
+    )
+    if len(script.split()) < 420:
+        expand_prompt = (
+            "Expand this news anchor script to 420-520 words. "
+            "Keep it in a natural, spoken-news style. "
+            "No labels or stage directions.\n\n"
+            f"Script:\n{script}"
+        )
+        script, _ = await chat(
+            expand_prompt,
+            max_tokens=900,
+            temperature=0.3,
+            system="You are a live news anchor. Output plain narration only.",
+        )
+    return script.strip(), metadata
+
+
+async def generate_podcast_script(analysis: AnalysisResult, *, style_variant: int = 0) -> Tuple[str, Dict[str, Any]]:
+    prompt = (
+        "Write a 3-minute podcast script for a news briefing.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Key Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Requirements:\n"
+        "- 420-520 words\n"
+        "- Sounds like a real host, not a list\n"
+        "- No section labels or stage directions\n"
+        "- End with CTA: \"Read full article at HT.com\"\n\n"
+        "Output only the script."
+    )
+    script, metadata = await chat(
+        prompt,
+        max_tokens=1200,
+        temperature=0.3,
+        system="You are a podcast host. Output plain narration only.",
+    )
+    if len(script.split()) < 420:
+        expand_prompt = (
+            "Expand this podcast script to 420-520 words. "
+            "Keep it natural and conversational. "
+            "No labels or stage directions.\n\n"
+            f"Script:\n{script}"
+        )
+        script, _ = await chat(
+            expand_prompt,
+            max_tokens=900,
+            temperature=0.3,
+            system="You are a podcast host. Output plain narration only.",
+        )
+    return script.strip(), metadata
+
+
+async def generate_social_posts(analysis: AnalysisResult, *, style_variant: int = 0) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    prompt = (
+        "Create platform-specific social posts from this news analysis.\n"
+        "Return JSON with keys: twitter_thread (list), linkedin (string), "
+        "instagram (object with slides list and caption), facebook (string), whatsapp (string).\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Facts: {analysis.facts}\n"
+        f"Tone: {analysis.tone}\n\n"
+        "Constraints:\n"
+        "- Twitter thread 5-7 tweets with hooks\n"
+        "- LinkedIn 500-700 words professional\n"
+        "- Instagram 5 slides + caption\n"
+        "- Facebook 200-300 words\n"
+        "- WhatsApp 150 words\n"
+        "Return strict JSON only."
+    )
+    text, metadata = await chat(
+        prompt,
+        max_tokens=1400,
+        temperature=0.4,
+        system="You are a social editor. Return strict JSON only.",
+    )
+    try:
+        data = _extract_json(text)
+        _validate_social(data)
+        return _normalize_social_payload(data), metadata
+    except Exception as exc:
+        log_event(LOGGER, "social_parse_failed", error=str(exc))
+        try:
+            data = await _repair_json(text)
+            _validate_social(data)
+            return _normalize_social_payload(data), metadata
+        except Exception as repair_exc:
+            log_event(LOGGER, "social_repair_failed", error=str(repair_exc))
+            return _normalize_social_payload(_fallback_social(analysis)), {**metadata, "warning": "fallback_social"}
+
+
+async def generate_translation(analysis: AnalysisResult, article_text: str) -> Tuple[TranslationResult, Dict[str, Any]]:
+    prompt = (
+        "Translate the full article into Hindi with cultural adaptation, not literal translation.\n"
+        "Preserve named entities and proper nouns.\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Entities: {analysis.entities}\n\n"
+        f"Article: {article_text}\n\n"
+        "Return JSON with keys: hindi_text, notes."
+    )
+    text, metadata = await chat(
+        prompt,
+        max_tokens=2000,
+        temperature=0.3,
+        system="You are a bilingual editor. Return strict JSON only.",
+    )
+    try:
+        data = _extract_json(text)
+        if "hindi_text" not in data:
+            raise LocalLLMError("Missing hindi_text in translation output")
+        return TranslationResult(hindi_text=str(data["hindi_text"]), notes=str(data.get("notes", "")) or None), metadata
+    except Exception as exc:
+        log_event(LOGGER, "translation_parse_failed", error=str(exc))
+        try:
+            data = await _repair_json(text)
+            if "hindi_text" not in data:
+                raise LocalLLMError("Missing hindi_text in translation output")
+            return TranslationResult(hindi_text=str(data["hindi_text"]), notes=str(data.get("notes", "")) or None), metadata
+        except Exception as repair_exc:
+            log_event(LOGGER, "translation_repair_failed", error=str(repair_exc))
+            return TranslationResult(hindi_text=text.strip(), notes="raw_output"), {**metadata, "warning": "fallback_translation"}
+
+
+async def generate_seo_package(analysis: AnalysisResult) -> Tuple[SEOReport, Dict[str, Any]]:
+    prompt = (
+        "Create an SEO package for the news story.\n"
+        "Return JSON with keys: headline_variants (10), meta_descriptions (3), "
+        "faqs (5 objects with question/answer), keywords (10-15), internal_links (3).\n\n"
+        f"Headline: {analysis.headline}\n"
+        f"Facts: {analysis.facts}\n"
+        f"Entities: {analysis.entities}\n\n"
+        "Return strict JSON only."
+    )
+    text, metadata = await chat(
+        prompt,
+        max_tokens=1000,
+        temperature=0.3,
+        system="You are an SEO editor. Return strict JSON only.",
+    )
+    try:
+        data = _extract_json(text)
+        report = _validate_seo(data)
+        return report, metadata
+    except Exception as exc:
+        log_event(LOGGER, "seo_parse_failed", error=str(exc))
+        try:
+            data = await _repair_json(text)
+            report = _validate_seo(data)
+            return report, metadata
+        except Exception as repair_exc:
+            log_event(LOGGER, "seo_repair_failed", error=str(repair_exc))
+            return _fallback_seo(analysis), {**metadata, "warning": "fallback_seo"}
+
+
+async def verify_fact(fact: str, sources: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    prompt = (
+        "Verify this claim against the provided sources.\n"
+        "Return JSON with keys: verified (true/false), confidence (high/medium/low), sources (list).\n\n"
+        f"Claim: {fact}\n"
+        f"Sources: {sources}\n\n"
+        "Return strict JSON only."
+    )
+    text, metadata = await chat(
+        prompt,
+        max_tokens=500,
+        temperature=0.2,
+        system="You are a fact-checking editor. Return strict JSON only.",
+    )
+    try:
+        data = _extract_json(text)
+    except Exception:
+        data = await _repair_json(text)
+    return {
+        "verified": bool(data.get("verified")),
+        "confidence": str(data.get("confidence", "low")),
+        "sources": data.get("sources", []),
+    }, metadata

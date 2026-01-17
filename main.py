@@ -1,15 +1,9 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict
-
-import streamlit as st
-
-from app.core.job_manager import JobManager
-from app.utils.archive import build_zip
-from app.utils.extract import extract_article_from_url
-from app.utils.validation import ValidationError, validate_article
 
 ROOT_DIR = Path(__file__).parent
 DEFAULT_TITLE = "HT Content Multiplier"
@@ -21,6 +15,16 @@ try:
     load_dotenv(dotenv_path=ROOT_DIR / ".env")
 except Exception:
     pass
+
+import streamlit as st
+import streamlit.components.v1 as components
+from html import escape
+import urllib.parse
+
+from app.core.job_manager import JobManager
+from app.utils.archive import build_zip
+from app.utils.extract import extract_article_from_url
+from app.utils.validation import ValidationError, validate_article
 
 
 def main() -> None:
@@ -49,22 +53,8 @@ def _render_header() -> None:
 
 
 def _render_sidebar() -> None:
-    st.sidebar.header("System Status")
-    if os.getenv("USE_FREE_PROVIDERS", "0").lower() in {"1", "true", "yes"}:
-        st.sidebar.info("Free provider mode enabled.")
-    if _demo_mode_enabled():
-        st.sidebar.success("Demo mode enabled.")
-    avatar_path = os.getenv("HT_AVATAR_PATH", "")
-    if avatar_path:
-        st.sidebar.write(f"Avatar: {avatar_path} ({'ok' if os.path.exists(avatar_path) else 'missing'})")
-    else:
-        st.sidebar.write("Avatar: not set")
-    missing = _missing_env_keys()
-    if missing:
-        st.sidebar.warning(f"Missing keys: {', '.join(missing)}")
-    else:
-        st.sidebar.success("All API keys configured.")
-    st.sidebar.info("Pipelines run in parallel with retries and cost tracking.")
+    st.sidebar.header("Quick Actions")
+    st.sidebar.info("Use Preview URL to confirm extracted text before generating.")
 
 
 def _render_input(job_manager: JobManager) -> None:
@@ -104,18 +94,40 @@ def _render_input(job_manager: JobManager) -> None:
         if uploaded is not None:
             upload_text = uploaded.read().decode("utf-8", errors="ignore")
 
+    st.write("Use Case")
+    _ensure_use_case_defaults()
+    use_case = st.selectbox(
+        "Choose a workflow",
+        [
+            "Editorial Full Pack",
+            "Breaking News Fast Pack",
+            "Markets Pulse",
+            "Youth Summary",
+            "Hindi First",
+        ],
+        key="use_case",
+        on_change=_apply_use_case_defaults,
+    )
+    st.caption(_use_case_description(use_case))
+    _render_use_case_help()
+
     st.write("Options")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.checkbox("Video", value=True, disabled=True)
+        use_style = st.checkbox("HT Flavor", value=st.session_state.get("use_style", True), key="use_style")
     with col2:
-        st.checkbox("Audio", value=True, disabled=True)
+        fast_mode = st.checkbox("Breaking-News", value=st.session_state.get("fast_mode", False), key="fast_mode")
     with col3:
-        st.checkbox("Social", value=True, disabled=True)
+        audience = st.selectbox(
+            "Audience",
+            ["General", "Markets", "Youth", "Hindi-first"],
+            index=["General", "Markets", "Youth", "Hindi-first"].index(st.session_state.get("audience", "General")),
+            key="audience",
+        )
     with col4:
-        st.checkbox("Hindi", value=True, disabled=True)
-    with col5:
-        use_style = st.checkbox("HT Flavor", value=True)
+        st.write("Outputs")
+        outputs = _outputs_for_mode(fast_mode)
+        st.caption(", ".join(outputs))
 
     if st.button("Generate Content Package", type="primary"):
         try:
@@ -123,7 +135,7 @@ def _render_input(job_manager: JobManager) -> None:
             if source_type == "paste":
                 validate_article(source_payload)
             job_id = job_manager.create_job()
-            job_manager.start_analysis(job_id, source_type, source_payload, use_style)
+            job_manager.start_analysis(job_id, source_type, source_payload, use_style, audience, fast_mode)
             st.session_state.job_id = job_id
             st.rerun()
         except ValidationError as exc:
@@ -197,28 +209,34 @@ def _render_dashboard(job_manager: JobManager, job_id: str) -> None:
     zip_bytes = build_zip([artifact["path"] for artifact in artifacts])
     if zip_bytes:
         st.download_button("Download All", zip_bytes, file_name=f"{job_id}_package.zip")
+    _render_publish_pack(artifacts_by_type)
 
-    tabs = st.tabs(["Video", "Audio", "Social", "Hindi", "SEO", "QA", "Analysis"])
-    with tabs[0]:
-        _render_video_tab(artifacts_by_type)
-    with tabs[1]:
-        _render_audio_tab(artifacts_by_type)
-    with tabs[2]:
-        _render_social_tab(artifacts_by_type)
-    with tabs[3]:
-        _render_hindi_tab(artifacts_by_type)
-    with tabs[4]:
-        _render_seo_tab(artifacts_by_type)
-    with tabs[5]:
-        _render_qa_tab(artifacts_by_type)
-    with tabs[6]:
-        _render_analysis_tab(artifacts_by_type)
+    enabled = _enabled_pipelines_from_artifacts(artifacts_by_type)
+    tab_labels = [label for label in ["Video", "Audio", "Social", "Hindi", "SEO", "QA", "Analysis"] if label in enabled]
+    tabs = st.tabs(tab_labels)
+    for label, tab in zip(tab_labels, tabs, strict=False):
+        with tab:
+            if label == "Video":
+                _render_video_tab(job_id, artifacts_by_type)
+            elif label == "Audio":
+                _render_audio_tab(artifacts_by_type)
+            elif label == "Social":
+                _render_social_tab(job_id, artifacts_by_type)
+            elif label == "Hindi":
+                _render_hindi_tab(job_id, artifacts_by_type)
+            elif label == "SEO":
+                _render_seo_tab(job_id, artifacts_by_type)
+            elif label == "QA":
+                _render_qa_tab(artifacts_by_type)
+            elif label == "Analysis":
+                _render_analysis_tab(artifacts_by_type)
 
 
 def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
     artifacts = job_manager.list_artifacts(job_id)
     types = {artifact["type"] for artifact in artifacts}
     error_types = {artifact["type"] for artifact in artifacts if artifact["type"].startswith("error_")}
+    enabled = _enabled_pipelines_from_artifacts({artifact["type"]: artifact for artifact in artifacts})
     steps = [
         ("Analysis", {"analysis"}, "error_analysis"),
         ("Video", {"video_branded", "video_raw"}, "error_video"),
@@ -229,7 +247,9 @@ def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
         ("QA", {"qa"}, "error_qa"),
     ]
     for label, artifact_types, error_type in steps:
-        if error_type in error_types:
+        if label not in enabled:
+            status = "skipped"
+        elif error_type in error_types:
             status = "failed"
         elif types.intersection(artifact_types):
             status = "done"
@@ -238,7 +258,7 @@ def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
         st.write(f"{label}: {status}")
 
 
-def _render_video_tab(artifacts: Dict[str, Any]) -> None:
+def _render_video_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     video = artifacts.get("video_branded") or artifacts.get("video_raw")
     if not video:
         st.info("Video not available yet.")
@@ -251,8 +271,8 @@ def _render_video_tab(artifacts: Dict[str, Any]) -> None:
         st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
     script = artifacts.get("video_script")
     if script:
-        with open(script["path"], "r", encoding="utf-8") as handle:
-            st.text(handle.read())
+        content = _read_text(script["path"])
+        st.text_area("Video script", value=content, height=200, key=f"video_script_{job_id}")
 
 
 def _render_audio_tab(artifacts: Dict[str, Any]) -> None:
@@ -268,13 +288,54 @@ def _render_audio_tab(artifacts: Dict[str, Any]) -> None:
         st.video(audiogram["path"])
 
 
-def _render_social_tab(artifacts: Dict[str, Any]) -> None:
+def _render_social_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     social = artifacts.get("social")
     if not social:
         st.info("Social posts not available yet.")
         return
-    with open(social["path"], "r", encoding="utf-8") as handle:
-        st.json(json.load(handle))
+    content = _safe_json_loads(_read_text(social["path"]))
+    if not content:
+        st.warning("Social content is malformed; showing raw output.")
+        st.text_area("Social raw output", value=_read_text(social["path"]), height=240, key=f"social_raw_{job_id}")
+        return
+    twitter_items = _coerce_list(content.get("twitter_thread", []))
+    _render_social_carousel(
+        "Twitter thread",
+        twitter_items,
+        job_id,
+        "twitter",
+        "\n".join(twitter_items),
+    )
+    _render_social_carousel(
+        "LinkedIn",
+        [content.get("linkedin", "")],
+        job_id,
+        "linkedin",
+        content.get("linkedin", ""),
+    )
+    instagram = content.get("instagram", {})
+    instagram_items = _filter_instagram_slides(_coerce_list(instagram.get("slides", [])))
+    _render_social_carousel(
+        "Instagram",
+        instagram_items if instagram_items else [str(instagram.get("caption", ""))],
+        job_id,
+        "instagram",
+        f"Caption: {instagram.get('caption', '')}\n\nSlides:\n" + "\n".join(instagram_items),
+    )
+    _render_social_carousel(
+        "Facebook",
+        [content.get("facebook", "")],
+        job_id,
+        "facebook",
+        content.get("facebook", ""),
+    )
+    _render_social_carousel(
+        "WhatsApp",
+        [content.get("whatsapp", "")],
+        job_id,
+        "whatsapp",
+        content.get("whatsapp", ""),
+    )
     st.download_button(
         "Download Social JSON",
         _read_bytes(social["path"]),
@@ -282,13 +343,13 @@ def _render_social_tab(artifacts: Dict[str, Any]) -> None:
     )
 
 
-def _render_hindi_tab(artifacts: Dict[str, Any]) -> None:
+def _render_hindi_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     translation = artifacts.get("translation")
     if not translation:
         st.info("Hindi translation not available yet.")
         return
-    with open(translation["path"], "r", encoding="utf-8") as handle:
-        st.text(handle.read())
+    content = _read_text(translation["path"])
+    st.text_area("Hindi translation", value=content, height=240, key=f"hindi_{job_id}")
     st.download_button(
         "Download Hindi",
         _read_bytes(translation["path"]),
@@ -299,13 +360,13 @@ def _render_hindi_tab(artifacts: Dict[str, Any]) -> None:
         st.audio(voiceover["path"])
 
 
-def _render_seo_tab(artifacts: Dict[str, Any]) -> None:
+def _render_seo_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     seo = artifacts.get("seo")
     if not seo:
         st.info("SEO package not available yet.")
         return
-    with open(seo["path"], "r", encoding="utf-8") as handle:
-        st.json(json.load(handle))
+    content = _read_text(seo["path"])
+    st.text_area("SEO JSON", value=content, height=240, key=f"seo_{job_id}")
     st.download_button("Download SEO JSON", _read_bytes(seo["path"]), file_name=os.path.basename(seo["path"]))
 
 
@@ -314,8 +375,12 @@ def _render_qa_tab(artifacts: Dict[str, Any]) -> None:
     if not qa:
         st.info("QA report not available yet.")
         return
-    with open(qa["path"], "r", encoding="utf-8") as handle:
-        st.json(json.load(handle))
+    content = _safe_json_loads(_read_text(qa["path"]))
+    if content:
+        st.json(content)
+    else:
+        st.warning("QA output is malformed; showing raw output.")
+        st.text_area("QA raw output", value=_read_text(qa["path"]), height=240)
     st.download_button("Download QA JSON", _read_bytes(qa["path"]), file_name=os.path.basename(qa["path"]))
 
 
@@ -324,8 +389,12 @@ def _render_analysis_tab(artifacts: Dict[str, Any]) -> None:
     if not analysis:
         st.info("Analysis not available.")
         return
-    with open(analysis["path"], "r", encoding="utf-8") as handle:
-        st.json(json.load(handle))
+    content = _safe_json_loads(_read_text(analysis["path"]))
+    if content:
+        st.json(content)
+    else:
+        st.warning("Analysis output is malformed; showing raw output.")
+        st.text_area("Analysis raw output", value=_read_text(analysis["path"]), height=240)
     metadata = analysis.get("metadata", {})
     if metadata:
         st.caption(f"Model: {metadata.get('model')} | Cost (USD): {metadata.get('cost_usd')}")
@@ -336,6 +405,153 @@ def _read_bytes(path: str) -> bytes:
         return b""
     with open(path, "rb") as handle:
         return handle.read()
+
+
+def _read_text(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _write_text(path: str, content: str) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _safe_json_loads(raw: str) -> Dict[str, Any] | None:
+    if not raw.strip():
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _coerce_list(items: Any) -> list[str]:
+    if items is None:
+        return []
+    if isinstance(items, list):
+        return [str(item) for item in items]
+    return [str(items)]
+
+
+def _filter_instagram_slides(slides: list[str]) -> list[str]:
+    filtered = []
+    for item in slides:
+        cleaned = item.strip()
+        if re.match(r"^[\\w./-]+\\.(jpg|jpeg|png|gif|webp)$", cleaned, re.IGNORECASE):
+            continue
+        filtered.append(cleaned)
+    return filtered
+
+
+def _enabled_pipelines_from_artifacts(artifacts: Dict[str, Any]) -> list[str]:
+    options = artifacts.get("options", {}).get("metadata", {})
+    fast_mode = bool(options.get("fast_mode"))
+    if fast_mode:
+        return ["Video", "Social", "SEO", "QA", "Analysis"]
+    return ["Video", "Audio", "Social", "Hindi", "SEO", "QA", "Analysis"]
+
+
+def _render_social_carousel(
+    title: str,
+    items: list[str],
+    job_id: str,
+    channel: str,
+    copy_text: str,
+) -> None:
+    share_url = _share_url(channel, copy_text)
+    safe_items = [escape(item) for item in items if item]
+    slides = "\n".join(
+        [
+            f"<div class='slide'><div class='slide-inner'>{item}</div></div>"
+            for item in safe_items
+        ]
+    )
+    html = f"""
+    <style>
+      .card {{ border: 1px solid #e2e8f0; border-radius: 18px; padding: 18px; background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); margin-bottom: 18px; max-width: 920px; box-shadow: 0 12px 30px rgba(15,23,42,0.08); }}
+      .card h4 {{ margin: 0; font-size: 18px; color: #0f172a; }}
+      .carousel {{ display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 8px; scroll-behavior: smooth; }}
+      .slide {{ scroll-snap-align: center; min-width: 100%; max-width: 100%; background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 16px; box-shadow: inset 0 0 0 1px rgba(99,102,241,0.05); }}
+      .slide-inner {{ font-size: 14px; line-height: 1.55; color: #0f172a; }}
+      .actions {{ display: flex; gap: 10px; margin-top: 12px; align-items: center; }}
+      .icon-btn {{ border: 1px solid #e2e8f0; border-radius: 10px; padding: 6px 10px; cursor: pointer; background: white; font-size: 16px; box-shadow: 0 6px 12px rgba(15,23,42,0.08); }}
+      .icon-link {{ text-decoration: none; }}
+      .title-row {{ display: flex; justify-content: space-between; align-items: center; gap: 8px; }}
+      .nav {{ display: flex; gap: 6px; }}
+    </style>
+    <div class="card">
+      <div class="title-row">
+        <h4>{escape(title)}</h4>
+        <div class="nav">
+          <button class="icon-btn" id="prev_{channel}_{job_id}">◀</button>
+          <button class="icon-btn" id="next_{channel}_{job_id}">▶</button>
+        </div>
+      </div>
+      <div class="carousel" id="carousel_{channel}_{job_id}">
+        {slides}
+      </div>
+      <div class="actions">
+        <button class="icon-btn" id="copy_{channel}_{job_id}">📋</button>
+        <a class="icon-link" href="{share_url}" target="_blank"><span class="icon-btn">🔗</span></a>
+      </div>
+    </div>
+    <script>
+      const btn = document.getElementById("copy_{channel}_{job_id}");
+      const carousel = document.getElementById("carousel_{channel}_{job_id}");
+      const prevBtn = document.getElementById("prev_{channel}_{job_id}");
+      const nextBtn = document.getElementById("next_{channel}_{job_id}");
+      const scrollByCard = () => carousel?.clientWidth || 0;
+      prevBtn?.addEventListener("click", () => {{
+        carousel.scrollLeft -= scrollByCard();
+      }});
+      nextBtn?.addEventListener("click", () => {{
+        carousel.scrollLeft += scrollByCard();
+      }});
+      btn.addEventListener("click", () => {{
+        navigator.clipboard.writeText({json.dumps(copy_text)});
+        btn.textContent = "✅";
+        setTimeout(() => (btn.textContent = "📋"), 1200);
+      }});
+    </script>
+    """
+    components.html(html, height=340)
+    st.download_button(
+        "⬇️",
+        copy_text.encode("utf-8"),
+        file_name=f"{channel}_{job_id}.txt",
+        key=f"download_{channel}_{job_id}",
+    )
+
+
+def _copy_button(label: str, text: str, key: str) -> None:
+    payload = json.dumps(text)
+    html = f"""
+    <button id="btn_{key}">{label}</button>
+    <script>
+    const btn = document.getElementById("btn_{key}");
+    btn.addEventListener("click", () => {{
+      navigator.clipboard.writeText({payload});
+      btn.innerText = "Copied";
+      setTimeout(() => (btn.innerText = "{label}"), 1200);
+    }});
+    </script>
+    """
+    components.html(html, height=35)
+
+
+def _share_url(channel: str, text: str) -> str:
+    encoded = urllib.parse.quote(text)
+    links = {
+        "twitter": f"https://twitter.com/intent/tweet?text={encoded}",
+        "linkedin": f"https://www.linkedin.com/sharing/share-offsite/?url={encoded}",
+        "facebook": f"https://www.facebook.com/sharer/sharer.php?u={encoded}",
+        "whatsapp": f"https://wa.me/?text={encoded}",
+        "instagram": "https://www.instagram.com/",
+    }
+    return links.get(channel, "https://www.ht.com")
 
 
 def _missing_env_keys() -> list[str]:
@@ -374,10 +590,123 @@ def _run_demo(job_manager: JobManager) -> None:
         article_text = handle.read()
     st.info("Demo mode: running with the preset article.")
     job_id = job_manager.create_job()
-    job_manager.start_analysis(job_id, "paste", article_text, use_style=True)
+    job_manager.start_analysis(job_id, "paste", article_text, use_style=True, audience="Markets", fast_mode=False)
     st.session_state.job_id = job_id
     st.session_state.demo_started = True
     st.rerun()
+
+
+def _use_case_description(use_case: str) -> str:
+    descriptions = {
+        "Editorial Full Pack": "Full distribution set: video, audio, social, Hindi, SEO, QA.",
+        "Breaking News Fast Pack": "Speed mode for spikes: video, social, SEO, QA only.",
+        "Markets Pulse": "Finance-first framing with concise market impact.",
+        "Youth Summary": "Shorter, punchier social hooks for younger audiences.",
+        "Hindi First": "Hindi-led summary and voice for regional reach.",
+    }
+    return descriptions.get(use_case, "")
+
+
+def _render_use_case_help() -> None:
+    st.markdown(
+        """\
+**Use-case guide**
+
+- **Editorial Full Pack**: All formats for daily coverage, maximum reach.
+- **Breaking News Fast Pack**: Minimal outputs for speed during spikes.
+- **Markets Pulse**: Finance-first framing for investors and analysts.
+- **Youth Summary**: Shorter hooks for social-native audiences.
+- **Hindi First**: Hindi-led reach for regional growth.
+"""
+    )
+
+
+def _ensure_use_case_defaults() -> None:
+    if "use_case" not in st.session_state:
+        st.session_state.use_case = "Editorial Full Pack"
+    if "use_style" not in st.session_state:
+        st.session_state.use_style = True
+    if "fast_mode" not in st.session_state:
+        st.session_state.fast_mode = False
+    if "audience" not in st.session_state:
+        st.session_state.audience = "General"
+
+
+def _apply_use_case_defaults() -> None:
+    use_case = st.session_state.use_case
+    if use_case == "Breaking News Fast Pack":
+        st.session_state.fast_mode = True
+        st.session_state.audience = "General"
+    elif use_case == "Markets Pulse":
+        st.session_state.fast_mode = False
+        st.session_state.audience = "Markets"
+    elif use_case == "Youth Summary":
+        st.session_state.fast_mode = False
+        st.session_state.audience = "Youth"
+    elif use_case == "Hindi First":
+        st.session_state.fast_mode = False
+        st.session_state.audience = "Hindi-first"
+    else:
+        st.session_state.fast_mode = False
+        st.session_state.audience = "General"
+
+
+def _outputs_for_mode(fast_mode: bool) -> list[str]:
+    if fast_mode:
+        return ["Video", "Social", "SEO", "QA"]
+    return ["Video", "Audio", "Social", "Hindi", "SEO", "QA"]
+
+
+def _render_publish_pack(artifacts: Dict[str, Any]) -> None:
+    package = _build_package_manifest(artifacts)
+    if package:
+        st.download_button(
+            "Export for CMS/Scheduler",
+            json.dumps(package, ensure_ascii=True, indent=2).encode("utf-8"),
+            file_name="cms_package.json",
+        )
+    csv_payload = _build_social_csv(artifacts)
+    if csv_payload:
+        st.download_button(
+            "Download Social CSV",
+            csv_payload.encode("utf-8"),
+            file_name="social_posts.csv",
+        )
+
+
+def _build_package_manifest(artifacts: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    analysis = artifacts.get("analysis")
+    if analysis and os.path.exists(analysis["path"]):
+        payload["analysis"] = _safe_json_loads(_read_text(analysis["path"]))
+    if "video_script" in artifacts:
+        payload["video_script"] = _read_text(artifacts["video_script"]["path"])
+    if "social" in artifacts:
+        payload["social"] = _safe_json_loads(_read_text(artifacts["social"]["path"]))
+    if "seo" in artifacts:
+        payload["seo"] = _safe_json_loads(_read_text(artifacts["seo"]["path"]))
+    if "translation" in artifacts:
+        payload["hindi"] = _read_text(artifacts["translation"]["path"])
+    if "qa" in artifacts:
+        payload["qa"] = _safe_json_loads(_read_text(artifacts["qa"]["path"]))
+    return payload
+
+
+def _build_social_csv(artifacts: Dict[str, Any]) -> str:
+    social = artifacts.get("social")
+    if not social or not os.path.exists(social["path"]):
+        return ""
+    data = json.loads(_read_text(social["path"]))
+    rows = ["platform,content"]
+    for tweet in data.get("twitter_thread", []):
+        tweet_text = str(tweet)
+        rows.append(f"twitter,\"{tweet_text.replace('\"', '\"\"')}\"")
+    rows.append(f"linkedin,\"{str(data.get('linkedin', '')).replace('\"', '\"\"')}\"")
+    instagram = data.get("instagram", {})
+    rows.append(f"instagram,\"{str(instagram.get('caption', '')).replace('\"', '\"\"')}\"")
+    rows.append(f"facebook,\"{str(data.get('facebook', '')).replace('\"', '\"\"')}\"")
+    rows.append(f"whatsapp,\"{str(data.get('whatsapp', '')).replace('\"', '\"\"')}\"")
+    return "\n".join(rows) + "\n"
 
 
 if __name__ == "__main__":

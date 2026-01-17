@@ -8,7 +8,6 @@ from app.core.models import AnalysisResult, SEOReport, TranslationResult
 from app.utils.logging import get_logger, log_event
 from app.utils.provider import use_free_providers
 from app.services import free_llm
-from app.services.free_translate import translate_text
 from app.utils.retry import async_retry
 
 LOGGER = get_logger("services.claude")
@@ -35,21 +34,38 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 
 def _validate_analysis(data: Dict[str, Any]) -> AnalysisResult:
-    required = ["headline", "category", "tone", "facts", "quotes", "entities", "narrative_arc"]
-    missing = [key for key in required if key not in data]
+    headline = str(data.get("headline", "")).strip()
+    category = str(data.get("category", "")).strip()
+    tone = str(data.get("tone", "")).strip()
+    if not headline or not category or not tone:
+        raise ClaudeError("Missing required keys in analysis output")
+
+    facts = [str(item) for item in data.get("facts", []) if str(item).strip()]
+    quotes = [
+        {"quote": str(q.get("quote", "")), "speaker": str(q.get("speaker", ""))}
+        for q in data.get("quotes", [])
+        if isinstance(q, dict)
+    ]
+    entities = [str(item) for item in data.get("entities", []) if str(item).strip()]
+    narrative_arc = data.get("narrative_arc") or {}
+    if not isinstance(narrative_arc, dict):
+        narrative_arc = {}
+
+    missing = [key for key in ["facts", "quotes", "entities", "narrative_arc"] if key not in data]
     if missing:
-        raise ClaudeError(f"Missing keys in analysis output: {', '.join(missing)}")
+        log_event(LOGGER, "analysis_missing_optional_keys", missing=missing)
+
     return AnalysisResult(
-        headline=str(data["headline"]),
-        category=str(data["category"]),
-        tone=str(data["tone"]),
-        facts=[str(item) for item in data.get("facts", [])],
-        quotes=[{"quote": str(q.get("quote", "")), "speaker": str(q.get("speaker", ""))} for q in data.get("quotes", [])],
-        entities=[str(item) for item in data.get("entities", [])],
+        headline=headline,
+        category=category,
+        tone=tone,
+        facts=facts,
+        quotes=quotes,
+        entities=entities,
         narrative_arc={
-            "setup": str(data.get("narrative_arc", {}).get("setup", "")),
-            "conflict": str(data.get("narrative_arc", {}).get("conflict", "")),
-            "resolution": str(data.get("narrative_arc", {}).get("resolution", "")),
+            "setup": str(narrative_arc.get("setup", "")),
+            "conflict": str(narrative_arc.get("conflict", "")),
+            "resolution": str(narrative_arc.get("resolution", "")),
         },
     )
 
@@ -105,7 +121,7 @@ async def _call_claude(prompt: str, *, max_tokens: int, temperature: float, syst
 
 async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.analyze_content(article_text)
+        return await free_llm.analyze_content(article_text)
     prompt = (
         "Analyze this news article and extract:\n"
         "1. Headline, category, tone (neutral/urgent/investigative)\n"
@@ -133,32 +149,42 @@ async def generate_video_script(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.generate_video_script(analysis)
+        return await free_llm.generate_video_script(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
-        "Create a 60-second news video script.\n\n"
+        "Write a 3-minute news anchor script for a video segment.\n\n"
         f"Source: {analysis.headline} - {analysis.category}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
         f"{style_hint}\n"
         "Requirements:\n"
-        "- Max 150 words (comfortable speaking pace)\n"
-        "- Structure: Hook (5s) -> Body (45s) -> Conclusion (10s)\n"
-        "- Conversational yet authoritative\n"
+        "- 420-520 words (3+ minutes at 140-160 wpm)\n"
+        "- Professional, confident anchor voice\n"
+        "- No section labels like Hook/Body/Conclusion\n"
+        "- No stage directions, just spoken narration\n"
         "- Include 1-2 key statistics or quotes\n"
         "- End with CTA: \"Read full article at HT.com\"\n\n"
-        "Output only the script, no preamble."
+        "Output only the script."
     )
     script, metadata = await _call_claude(
         prompt,
-        max_tokens=500,
+        max_tokens=1200,
         temperature=0.3,
-        system="You write broadcast-ready scripts. Output plain text only.",
+        system="You are a live news anchor. Output plain narration only.",
     )
-    words = script.split()
-    if len(words) > 160:
-        script = " ".join(words[:150]).strip()
-        metadata["note"] = "script_trimmed"
+    if len(script.split()) < 420:
+        expand_prompt = (
+            "Expand this news anchor script to 420-520 words. "
+            "Keep it in a natural, spoken-news style. "
+            "No labels or stage directions.\n\n"
+            f"Script:\n{script}"
+        )
+        script, _ = await _call_claude(
+            expand_prompt,
+            max_tokens=900,
+            temperature=0.3,
+            system="You are a live news anchor. Output plain narration only.",
+        )
     return script.strip(), metadata
 
 
@@ -167,27 +193,40 @@ async def generate_podcast_script(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.generate_podcast_script(analysis)
+        return await free_llm.generate_podcast_script(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
-        "Write a 3-5 minute podcast script based on the article analysis.\n\n"
+        "Write a 3-minute podcast script for a news briefing.\n\n"
         f"Headline: {analysis.headline}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
         f"{style_hint}\n"
         "Requirements:\n"
-        "- 450-700 words\n"
-        "- Friendly, informative tone\n"
-        "- Include a brief intro and wrap-up\n"
-        "- Mention source attribution\n\n"
-        "Output only the script, no preamble."
+        "- 420-520 words\n"
+        "- Sounds like a real host, not a list\n"
+        "- No section labels or stage directions\n"
+        "- End with CTA: \"Read full article at HT.com\"\n\n"
+        "Output only the script."
     )
     script, metadata = await _call_claude(
         prompt,
         max_tokens=1200,
-        temperature=0.4,
-        system="You write podcast narration. Output plain text only.",
+        temperature=0.3,
+        system="You are a podcast host. Output plain narration only.",
     )
+    if len(script.split()) < 420:
+        expand_prompt = (
+            "Expand this podcast script to 420-520 words. "
+            "Keep it natural and conversational. "
+            "No labels or stage directions.\n\n"
+            f"Script:\n{script}"
+        )
+        script, _ = await _call_claude(
+            expand_prompt,
+            max_tokens=900,
+            temperature=0.3,
+            system="You are a podcast host. Output plain narration only.",
+        )
     return script.strip(), metadata
 
 
@@ -196,7 +235,7 @@ async def generate_social_posts(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.generate_social_posts(analysis)
+        return await free_llm.generate_social_posts(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Generate platform-specific social posts based on the article analysis.\n\n"
@@ -241,14 +280,7 @@ async def generate_translation(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[TranslationResult, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        translated = await translate_text(article_text)
-        if translated:
-            return TranslationResult(hindi_text=translated, notes="Free translate"), {
-                "model": "free_translate",
-                "usage": {},
-                "cost_usd": 0.0,
-            }
-        return free_llm.generate_translation(analysis, article_text)
+        return await free_llm.generate_translation(analysis, article_text)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Translate the full article into Hindi with cultural adaptation, not literal translation.\n"
@@ -276,7 +308,7 @@ async def generate_seo_package(
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[SEOReport, Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.generate_seo_package(analysis)
+        return await free_llm.generate_seo_package(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Create an SEO package for the article.\n\n"
@@ -314,7 +346,7 @@ async def generate_seo_package(
 
 async def verify_fact(fact: str, sources: list[dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if use_free_providers() or not ANTHROPIC_API_KEY:
-        return free_llm.verify_fact(fact, sources)
+        return await free_llm.verify_fact(fact, sources)
     prompt = (
         "Verify the claim using the provided sources. Respond in JSON with keys:\n"
         "verified (true/false), confidence (high/medium/low), sources (list of URLs).\n\n"

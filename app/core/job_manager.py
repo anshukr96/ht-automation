@@ -56,16 +56,32 @@ class JobManager:
             artifacts.append({"type": row["type"], "path": row["path"], "metadata": metadata})
         return artifacts
 
-    def start_analysis(self, job_id: str, source_type: str, source_payload: str, use_style: bool) -> None:
+    def start_analysis(
+        self,
+        job_id: str,
+        source_type: str,
+        source_payload: str,
+        use_style: bool,
+        audience: str,
+        fast_mode: bool,
+    ) -> None:
         thread = threading.Thread(
             target=self._run_async_job,
-            args=(job_id, source_type, source_payload, use_style),
+            args=(job_id, source_type, source_payload, use_style, audience, fast_mode),
             daemon=True,
         )
         thread.start()
 
-    def _run_async_job(self, job_id: str, source_type: str, source_payload: str, use_style: bool) -> None:
-        asyncio.run(self._analyze_job(job_id, source_type, source_payload, use_style))
+    def _run_async_job(
+        self,
+        job_id: str,
+        source_type: str,
+        source_payload: str,
+        use_style: bool,
+        audience: str,
+        fast_mode: bool,
+    ) -> None:
+        asyncio.run(self._analyze_job(job_id, source_type, source_payload, use_style, audience, fast_mode))
 
     async def _analyze_job(
         self,
@@ -73,6 +89,8 @@ class JobManager:
         source_type: str,
         source_payload: str,
         use_style: bool,
+        audience: str,
+        fast_mode: bool,
     ) -> None:
         try:
             db.update_job(job_id, status="running", progress=5)
@@ -88,23 +106,78 @@ class JobManager:
             db.update_job(job_id, status="generating", progress=30)
 
             style_guide = load_style_guide() if use_style else None
+            if style_guide and audience and audience != "General":
+                style_guide.setdefault("style_guide", {})
+                style_guide["style_guide"]["audience_override"] = audience
+            if style_guide and fast_mode:
+                style_guide.setdefault("style_guide", {})
+                style_guide["style_guide"]["mode"] = "breaking-news"
+            db.insert_artifact(
+                job_id,
+                "options",
+                "",
+                {"audience": audience, "fast_mode": fast_mode, "use_style": use_style},
+            )
 
-            pipeline_tasks = [
-                _run_pipeline(job_id, "video", run_video_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
-                _run_pipeline(job_id, "audio", run_audio_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
-                _run_pipeline(job_id, "social", run_social_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
-                _run_pipeline(
-                    job_id,
-                    "translation",
-                    run_translation_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
-                ),
-                _run_pipeline(job_id, "seo", run_seo_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide)),
-                _run_pipeline(
-                    job_id,
-                    "qa",
-                    run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
-                ),
-            ]
+            enabled = {"video", "audio", "social", "translation", "seo", "qa"}
+            if fast_mode:
+                enabled = {"video", "social", "seo", "qa"}
+
+            pipeline_tasks = []
+            if "video" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "video",
+                        run_video_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
+            if "audio" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "audio",
+                        run_audio_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
+            if "social" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "social",
+                        run_social_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
+            if "translation" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "translation",
+                        run_translation_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
+            if "seo" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "seo",
+                        run_seo_pipeline(job_id, analysis, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
+            if "qa" in enabled:
+                pipeline_tasks.append(
+                    _run_pipeline(
+                        job_id,
+                        "qa",
+                        run_qa_pipeline(job_id, analysis, article_text, ARTIFACT_DIR, style_guide),
+                        enabled,
+                    )
+                )
 
             results = await asyncio.gather(*pipeline_tasks)
             errors = [item for item in results if item]
@@ -152,40 +225,45 @@ def _write_article(job_id: str, article_text: str) -> str:
     return artifact_path
 
 
-async def _run_pipeline(job_id: str, name: str, coroutine: Awaitable[list[Dict[str, Any]]]) -> str | None:
+async def _run_pipeline(
+    job_id: str,
+    name: str,
+    coroutine: Awaitable[list[Dict[str, Any]]],
+    enabled_pipelines: set[str],
+) -> str | None:
     log_event(LOGGER, "pipeline_start", job_id=job_id, pipeline=name)
     try:
         artifacts = await coroutine
         for artifact in artifacts:
             db.insert_artifact(job_id, artifact["type"], artifact["path"], artifact["metadata"])
-        db.update_job(job_id, progress=_calculate_progress(job_id))
+        db.update_job(job_id, progress=_calculate_progress(job_id, enabled_pipelines))
         log_event(LOGGER, "pipeline_done", job_id=job_id, pipeline=name)
         return None
     except Exception as exc:
         error_message = f"{name} pipeline failed: {exc}"
         db.insert_artifact(job_id, f"error_{name}", "", {"error": str(exc)})
-        db.update_job(job_id, progress=_calculate_progress(job_id))
+        db.update_job(job_id, progress=_calculate_progress(job_id, enabled_pipelines))
         log_event(LOGGER, "pipeline_failed", job_id=job_id, pipeline=name, error=str(exc))
         return error_message
 
 
-def _calculate_progress(job_id: str) -> int:
+def _calculate_progress(job_id: str, enabled_pipelines: set[str]) -> int:
     rows = db.fetch_artifacts(job_id)
     types = {row["type"] for row in rows}
     completed = 0
-    if "video_branded" in types or "video_raw" in types:
+    if "video" in enabled_pipelines and ("video_branded" in types or "video_raw" in types):
         completed += 1
-    if "audiogram" in types or "audio" in types:
+    if "audio" in enabled_pipelines and ("audiogram" in types or "audio" in types):
         completed += 1
-    if "social" in types:
+    if "social" in enabled_pipelines and "social" in types:
         completed += 1
-    if "translation" in types:
+    if "translation" in enabled_pipelines and "translation" in types:
         completed += 1
-    if "seo" in types:
+    if "seo" in enabled_pipelines and "seo" in types:
         completed += 1
-    if "qa" in types:
+    if "qa" in enabled_pipelines and "qa" in types:
         completed += 1
-    total = 6
+    total = max(1, len(enabled_pipelines))
     base = 30
     return base + int((completed / total) * 60)
 

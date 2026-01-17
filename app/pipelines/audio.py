@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 from app.core.models import AnalysisResult
 from app.services.claude import generate_podcast_script
 from app.services.elevenlabs import text_to_speech
+from app.services.free_media import generate_tts_audio
+from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import create_audiogram
 
@@ -24,11 +26,15 @@ async def run_audio_pipeline(
         handle.write(script)
     artifacts.append({"type": "audio_script", "path": script_path, "metadata": script_meta})
 
-    audio_bytes, audio_meta = await text_to_speech(script)
     audio_path = os.path.join(output_dir, f"{job_id}_podcast.mp3")
-    with open(audio_path, "wb") as handle:
-        handle.write(audio_bytes)
-    artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
+    if use_free_providers():
+        audio_path, audio_meta = generate_tts_audio(script, audio_path)
+        artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
+    else:
+        audio_bytes, audio_meta = await text_to_speech(script)
+        with open(audio_path, "wb") as handle:
+            handle.write(audio_bytes)
+        artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
 
     audiogram_path = os.path.join(output_dir, f"{job_id}_audiogram.mp4")
     try:

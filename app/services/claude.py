@@ -6,6 +6,8 @@ import httpx
 
 from app.core.models import AnalysisResult, SEOReport, TranslationResult
 from app.utils.logging import get_logger, log_event
+from app.utils.provider import use_free_providers
+from app.services import free_llm
 from app.utils.retry import async_retry
 
 LOGGER = get_logger("services.claude")
@@ -101,6 +103,8 @@ async def _call_claude(prompt: str, *, max_tokens: int, temperature: float, syst
 
 
 async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.analyze_content(article_text)
     prompt = (
         "Analyze this news article and extract:\n"
         "1. Headline, category, tone (neutral/urgent/investigative)\n"
@@ -127,6 +131,8 @@ async def generate_video_script(
     analysis: AnalysisResult,
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.generate_video_script(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Create a 60-second news video script.\n\n"
@@ -159,6 +165,8 @@ async def generate_podcast_script(
     analysis: AnalysisResult,
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[str, Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.generate_podcast_script(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Write a 3-5 minute podcast script based on the article analysis.\n\n"
@@ -186,6 +194,8 @@ async def generate_social_posts(
     analysis: AnalysisResult,
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.generate_social_posts(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Generate platform-specific social posts based on the article analysis.\n\n"
@@ -229,6 +239,8 @@ async def generate_translation(
     article_text: str,
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[TranslationResult, Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.generate_translation(analysis, article_text)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Translate the full article into Hindi with cultural adaptation, not literal translation.\n"
@@ -255,6 +267,8 @@ async def generate_seo_package(
     analysis: AnalysisResult,
     style_guide: Dict[str, Any] | None = None,
 ) -> Tuple[SEOReport, Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.generate_seo_package(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
         "Create an SEO package for the article.\n\n"
@@ -291,6 +305,8 @@ async def generate_seo_package(
 
 
 async def verify_fact(fact: str, sources: list[dict[str, Any]]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    if use_free_providers() or not ANTHROPIC_API_KEY:
+        return free_llm.verify_fact(fact, sources)
     prompt = (
         "Verify the claim using the provided sources. Respond in JSON with keys:\n"
         "verified (true/false), confidence (high/medium/low), sources (list of URLs).\n\n"

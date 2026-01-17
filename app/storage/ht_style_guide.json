@@ -1,18 +1,22 @@
 {
   "style_guide": {
-    "voice": "authoritative, neutral, fact-led",
-    "audience": "general Indian news readership",
+    "voice": "authoritative, neutral, fact-led, HT newsroom",
+    "audience": "general Indian news readership with business and policy focus",
     "language": "Indian English",
     "tense": "present or recent past",
     "structure": ["headline", "lede", "context", "impact", "next"],
     "tone_rules": [
-      "avoid speculation",
+      "avoid speculation or hype",
       "attribute claims to sources",
-      "keep sentences concise"
+      "lead with the news value in the first 1-2 lines",
+      "keep sentences concise, 20-28 words on average",
+      "use short paragraphs (2-3 sentences)"
     ],
-    "numbers": "use digits, format INR where relevant",
-    "prohibited_phrases": ["I think", "In my opinion", "We believe"],
-    "cta": "Read full article at HT.com"
+    "numbers": "use digits, format INR where relevant, include % where applicable",
+    "prohibited_phrases": ["I think", "In my opinion", "We believe", "game-changer", "shocking"],
+    "cta": "Read full article at HT.com",
+    "localization": "prioritize Indian context, mention policy/market impact when relevant",
+    "attribution": "use named sources, agencies, or company statements"
   },
   "social": {
     "twitter": {"max_thread_length": 7, "max_hashtags": 2},

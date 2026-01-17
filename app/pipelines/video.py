@@ -6,6 +6,8 @@ import httpx
 from app.core.models import AnalysisResult
 from app.services.claude import generate_video_script
 from app.services.did import create_talk
+from app.services.free_media import generate_placeholder_video
+from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import overlay_logo
 from app.utils.retry import async_retry
@@ -27,10 +29,14 @@ async def run_video_pipeline(
         handle.write(script)
     artifacts.append({"type": "video_script", "path": script_path, "metadata": script_meta})
 
-    video_url, did_meta = await create_talk(script)
     video_path = os.path.join(output_dir, f"{job_id}_video_raw.mp4")
-    await _download_file(video_url, video_path)
-    artifacts.append({"type": "video_raw", "path": video_path, "metadata": did_meta})
+    if use_free_providers():
+        video_path, meta = generate_placeholder_video(script, video_path)
+        artifacts.append({"type": "video_raw", "path": video_path, "metadata": meta})
+    else:
+        video_url, did_meta = await create_talk(script)
+        await _download_file(video_url, video_path)
+        artifacts.append({"type": "video_raw", "path": video_path, "metadata": did_meta})
 
     branded_path = os.path.join(output_dir, f"{job_id}_video_branded.mp4")
     logo_path = os.getenv("HT_LOGO_PATH", "")

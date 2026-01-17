@@ -5,6 +5,8 @@ from typing import Any, Dict, List
 from app.core.models import AnalysisResult
 from app.services.claude import generate_translation
 from app.services.elevenlabs import text_to_speech
+from app.services.free_media import generate_tts_audio
+from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 
 LOGGER = get_logger("pipelines.translation")
@@ -25,14 +27,17 @@ async def run_translation_pipeline(
         handle.write(translation.hindi_text)
     artifacts.append({"type": "translation", "path": translation_path, "metadata": meta})
 
-    if os.getenv("ELEVENLABS_HINDI_VOICE_ID"):
+    if os.getenv("ELEVENLABS_HINDI_VOICE_ID") or use_free_providers():
         try:
-            audio_bytes, audio_meta = await text_to_speech(
-                translation.hindi_text, voice_id=os.getenv("ELEVENLABS_HINDI_VOICE_ID")
-            )
             audio_path = os.path.join(output_dir, f"{job_id}_hindi_voiceover.mp3")
-            with open(audio_path, "wb") as handle:
-                handle.write(audio_bytes)
+            if use_free_providers():
+                audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path)
+            else:
+                audio_bytes, audio_meta = await text_to_speech(
+                    translation.hindi_text, voice_id=os.getenv("ELEVENLABS_HINDI_VOICE_ID")
+                )
+                with open(audio_path, "wb") as handle:
+                    handle.write(audio_bytes)
             artifacts.append({"type": "translation_audio", "path": audio_path, "metadata": audio_meta})
         except Exception as exc:
             log_event(LOGGER, "translation_tts_failed", job_id=job_id, error=str(exc))

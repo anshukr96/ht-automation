@@ -48,6 +48,8 @@ def _render_header() -> None:
 
 def _render_sidebar() -> None:
     st.sidebar.header("System Status")
+    if os.getenv("USE_FREE_PROVIDERS", "0").lower() in {"1", "true", "yes"}:
+        st.sidebar.info("Free provider mode enabled.")
     missing = _missing_env_keys()
     if missing:
         st.sidebar.warning(f"Missing keys: {', '.join(missing)}")
@@ -213,8 +215,12 @@ def _render_video_tab(artifacts: Dict[str, Any]) -> None:
     if not video:
         st.info("Video not available yet.")
         return
-    st.video(video["path"])
-    st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
+    if video["path"].endswith(".mp4") and os.path.exists(video["path"]):
+        st.video(video["path"])
+        st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
+    else:
+        st.text("Video placeholder generated (non-mp4).")
+        st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
     script = artifacts.get("video_script")
     if script:
         with open(script["path"], "r", encoding="utf-8") as handle:
@@ -226,8 +232,9 @@ def _render_audio_tab(artifacts: Dict[str, Any]) -> None:
     if not audio:
         st.info("Audio not available yet.")
         return
-    st.audio(audio["path"])
-    st.download_button("Download Audio", _read_bytes(audio["path"]), file_name=os.path.basename(audio["path"]))
+    if os.path.exists(audio["path"]):
+        st.audio(audio["path"])
+        st.download_button("Download Audio", _read_bytes(audio["path"]), file_name=os.path.basename(audio["path"]))
     audiogram = artifacts.get("audiogram")
     if audiogram and audiogram["path"].endswith(".mp4"):
         st.video(audiogram["path"])

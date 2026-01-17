@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 import httpx
 
 from app.utils.logging import get_logger, log_event
+from app.utils.provider import use_free_providers
 from app.utils.retry import async_retry
 
 LOGGER = get_logger("services.brave_search")
@@ -23,6 +24,8 @@ def _headers() -> Dict[str, str]:
 
 
 async def web_search(query: str, *, count: int = 5) -> List[Dict[str, Any]]:
+    if use_free_providers() or not BRAVE_SEARCH_API_KEY:
+        return []
     log_event(LOGGER, "brave_search", query=query)
 
     @async_retry(attempts=3, base_delay=0.8, exceptions=(httpx.HTTPError,))

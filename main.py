@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 ROOT_DIR = Path(__file__).parent
-DEFAULT_TITLE = "HT Content Multiplier"
+DEFAULT_TITLE = "LiveMint Content Multiplier"
 DEMO_ARTICLE_PATH = ROOT_DIR / "app" / "storage" / "demo_article.txt"
 
 try:
@@ -29,9 +29,9 @@ from app.utils.validation import ValidationError, validate_article
 
 def main() -> None:
     st.set_page_config(page_title=DEFAULT_TITLE, layout="wide")
-    _render_header()
-
+    _inject_theme()
     job_manager = JobManager()
+    _render_header(job_manager)
 
     if "job_id" not in st.session_state:
         st.session_state.job_id = None
@@ -42,25 +42,191 @@ def main() -> None:
     _render_input(job_manager)
 
 
-def _render_header() -> None:
-    col1, col2 = st.columns([3, 1])
+def _render_header(job_manager: JobManager) -> None:
+    col1, col2 = st.columns([4, 1])
     with col1:
-        st.title("HT Content Multiplier")
-        st.caption("Transform one article into 15+ content pieces in under 2 minutes.")
+        st.markdown(
+            """\
+            <div class="lm-hero">
+              <div class="lm-kicker">LiveMint AI Studio</div>
+              <h1>Content Multiplier</h1>
+              <p>Turn one story into a full distribution pack in minutes — video, audio, social, Hindi, SEO, QA.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with col2:
-        st.metric("Target Speed", "2 min", "300x faster")
-    _render_sidebar()
+        if _demo_mode_enabled():
+            st.markdown('<div class="lm-hero-action">', unsafe_allow_html=True)
+            if st.button("Run Demo Article"):
+                _run_demo(job_manager)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _render_sidebar() -> None:
-    st.sidebar.header("Quick Actions")
-    st.sidebar.info("Use Preview URL to confirm extracted text before generating.")
+def _inject_theme() -> None:
+    st.markdown(
+        """\
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Manrope:wght@300;400;500;600;700&display=swap');
+        :root {
+            --lm-ink: #0f1a13;
+            --lm-green: #1b7b5f;
+            --lm-emerald: #0d5c46;
+            --lm-lime: #ffd6a0;
+            --lm-cream: #f6f3ed;
+            --lm-gold: #f99d1c;
+            --lm-slate: #3b4b40;
+            --lm-surface: #ffffff;
+            --lm-surface-alt: #f7f5f0;
+        }
+        html, body, [class*="css"]  {
+            font-family: 'Manrope', sans-serif;
+            color: var(--lm-ink);
+        }
+        .stApp {
+            background: #ffffff;
+        }
+        .block-container {
+            padding-top: 2.25rem;
+            max-width: 1200px;
+        }
+        h1, h2, h3 {
+            font-family: 'Playfair Display', serif;
+            color: var(--lm-ink);
+        }
+        .lm-hero {
+            padding: 12px 0 8px 0;
+        }
+        .lm-kicker {
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            font-size: 20px;
+            color: var(--lm-gold);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .lm-hero-action {
+            display: flex;
+            justify-content: flex-end;
+            align-items: flex-start;
+            height: 100%;
+            padding-top: 18px;
+        }
+        .lm-tip {
+            margin-top: 8px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: #fff6e8;
+            color: #8a4f00;
+            font-size: 0.9rem;
+            border: 1px solid rgba(249, 157, 28, 0.25);
+        }
+        .lm-hero p {
+            font-size: 1rem;
+            color: var(--lm-slate);
+            margin-top: 6px;
+            max-width: 680px;
+        }
+        .lm-metric {
+            background: var(--lm-surface);
+            border: 1px solid rgba(15, 26, 19, 0.08);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 12px 24px rgba(15, 26, 19, 0.08);
+        }
+        .lm-metric-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--lm-emerald);
+            font-weight: 600;
+        }
+        .lm-metric-value {
+            font-size: 2.1rem;
+            font-family: 'Playfair Display', serif;
+            color: var(--lm-ink);
+            margin: 6px 0;
+        }
+        .lm-metric-sub {
+            color: var(--lm-slate);
+            font-size: 0.9rem;
+        }
+        .lm-card {
+            background: var(--lm-surface);
+            border: 1px solid rgba(15, 26, 19, 0.08);
+            border-radius: 18px;
+            padding: 16px;
+            box-shadow: 0 14px 30px rgba(15, 26, 19, 0.06);
+        }
+        .stButton > button {
+            border-radius: 999px;
+            background: linear-gradient(135deg, #d98512, #f99d1c);
+            color: #1a1a1a;
+            border: none;
+            padding: 0.6rem 1.3rem;
+            font-weight: 600;
+            box-shadow: 0 10px 18px rgba(27, 123, 95, 0.18);
+        }
+        .stButton > button:hover {
+            background: linear-gradient(135deg, #c7750f, #e89117);
+            color: #111111;
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, var(--lm-cream) 0%, var(--lm-surface) 100%);
+            border-right: 1px solid rgba(15, 26, 19, 0.08);
+        }
+        [data-testid="stSidebar"] h2 {
+            font-family: 'Playfair Display', serif;
+        }
+        [data-testid="stTabBar"] button {
+            border-radius: 999px;
+            padding: 6px 16px;
+        }
+        [data-testid="stTabBar"] button[aria-selected="true"] {
+            background: var(--lm-lime);
+            color: var(--lm-ink);
+            border: 1px solid rgba(15, 26, 19, 0.1);
+        }
+        [data-testid="stTabs"] [data-baseweb="tab-list"] {
+            border-bottom: none;
+        }
+        .stProgress > div > div {
+            background-image: linear-gradient(90deg, var(--lm-green), var(--lm-gold));
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --lm-ink: #f1f5f2;
+                --lm-slate: #d3ddd6;
+                --lm-cream: #0e1411;
+                --lm-surface: #0b120f;
+                --lm-surface-alt: #121a16;
+                --lm-lime: #2b5a49;
+            }
+            .stApp {
+                background: #0b120f;
+            }
+            .lm-metric,
+            .lm-card {
+                border-color: rgba(255, 255, 255, 0.08);
+                box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+            }
+            [data-testid="stSidebar"] {
+                background: #0f1612;
+                border-right: 1px solid rgba(255, 255, 255, 0.06);
+            }
+            [data-testid="stTabBar"] button[aria-selected="true"] {
+                border-color: rgba(255, 255, 255, 0.12);
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_input(job_manager: JobManager) -> None:
     st.subheader("Input Your Article")
     tabs = st.tabs(["Paste Text", "Enter URL", "Upload File"])
-
     with tabs[0]:
         paste_text = st.text_area(
             "Paste your article here",
@@ -94,6 +260,7 @@ def _render_input(job_manager: JobManager) -> None:
         if uploaded is not None:
             upload_text = uploaded.read().decode("utf-8", errors="ignore")
 
+    st.markdown('<div class="lm-card">', unsafe_allow_html=True)
     st.write("Use Case")
     _ensure_use_case_defaults()
     use_case = st.selectbox(
@@ -108,26 +275,27 @@ def _render_input(job_manager: JobManager) -> None:
         key="use_case",
         on_change=_apply_use_case_defaults,
     )
-    st.caption(_use_case_description(use_case))
-    _render_use_case_help()
+    st.info(_use_case_description(use_case))
 
     st.write("Options")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        use_style = st.checkbox("HT Flavor", value=st.session_state.get("use_style", True), key="use_style")
-    with col2:
-        fast_mode = st.checkbox("Breaking-News", value=st.session_state.get("fast_mode", False), key="fast_mode")
-    with col3:
+    opt_col1, opt_col2, opt_col3 = st.columns([1.1, 1.1, 1.8])
+    with opt_col1:
+        st.caption("Voice")
+        use_style = st.toggle("Mint Flavor", key="use_style")
+    with opt_col2:
+        st.caption("Mode")
+        fast_mode = st.toggle("Breaking-News", key="fast_mode")
+    with opt_col3:
+        st.caption("Audience")
         audience = st.selectbox(
             "Audience",
             ["General", "Markets", "Youth", "Hindi-first"],
             index=["General", "Markets", "Youth", "Hindi-first"].index(st.session_state.get("audience", "General")),
             key="audience",
+            label_visibility="collapsed",
         )
-    with col4:
-        st.write("Outputs")
-        outputs = _outputs_for_mode(fast_mode)
-        st.caption(", ".join(outputs))
+    outputs = _outputs_for_mode(fast_mode)
+    st.caption(f"Outputs: {', '.join(outputs)}")
 
     if st.button("Generate Content Package", type="primary"):
         try:
@@ -143,10 +311,8 @@ def _render_input(job_manager: JobManager) -> None:
         except ValueError as exc:
             st.error(str(exc))
 
-    if _demo_mode_enabled():
-        st.divider()
-        if st.button("Run Demo Article"):
-            _run_demo(job_manager)
+    # Demo button is placed in the header.
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_progress(job_manager: JobManager) -> None:

@@ -48,6 +48,19 @@ class JobManager:
             error=row["error"],
         )
 
+    def get_latest_active_job(self) -> Job | None:
+        row = db.fetch_latest_active_job()
+        if not row:
+            return None
+        return Job(
+            id=row["id"],
+            status=row["status"],
+            progress=int(row["progress"]),
+            started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            finished_at=datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None,
+            error=row["error"],
+        )
+
     def list_artifacts(self, job_id: str) -> list[Dict[str, Any]]:
         rows = db.fetch_artifacts(job_id)
         artifacts: list[Dict[str, Any]] = []

@@ -8,6 +8,7 @@ from app.services.free_media import generate_tts_audio
 from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import create_audiogram
+from app.utils.voice import get_anchor_gender, select_voice
 
 LOGGER = get_logger("pipelines.audio")
 
@@ -28,7 +29,8 @@ async def run_audio_pipeline(
 
     audio_path = os.path.join(output_dir, f"{job_id}_podcast.mp3")
     if use_free_providers():
-        voice = os.getenv("LOCAL_TTS_VOICE", "Aman")
+        anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
+        voice = select_voice("en", anchor_gender)
         audio_path, audio_meta = generate_tts_audio(script, audio_path, voice=voice)
         artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
     else:

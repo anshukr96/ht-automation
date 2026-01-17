@@ -7,6 +7,18 @@ from app.utils.logging import get_logger, log_event
 from app.utils.media import ffmpeg_available
 
 LOGGER = get_logger("services.free_media")
+WAV2LIP_DIR = os.getenv(
+    "WAV2LIP_DIR",
+    os.path.join(os.path.dirname(__file__), "..", "..", "tools", "wav2lip"),
+)
+WAV2LIP_CHECKPOINT = os.getenv(
+    "WAV2LIP_CHECKPOINT",
+    os.path.join(WAV2LIP_DIR, "checkpoints", "wav2lip_gan.pth"),
+)
+WAV2LIP_FACE_MODEL = os.getenv(
+    "WAV2LIP_FACE_MODEL",
+    os.path.join(WAV2LIP_DIR, "face_detection", "detection", "sfd", "s3fd.pth"),
+)
 
 
 def generate_placeholder_video(
@@ -85,9 +97,26 @@ def generate_avatar_video(
         return generate_placeholder_video(script, output_path, avatar_path=None)
 
     audio_path, audio_meta = generate_tts_audio(script, output_path.replace(".mp4", ".mp3"), voice=voice)
+    if _use_wav2lip() and _wav2lip_ready():
+        try:
+            wav2lip_path = output_path.replace(".mp4", "_lipsync.mp4")
+            wav2lip_path, wav2lip_meta = generate_lipsync_video(
+                avatar_path,
+                audio_path,
+                wav2lip_path,
+            )
+            wav2lip_meta.update({"voice": voice or "", **audio_meta})
+            return wav2lip_path, wav2lip_meta
+        except Exception as exc:
+            log_event(LOGGER, "wav2lip_failed", error=str(exc))
+
     filter_complex = (
         "[0:v]scale=1920:-1,"
-        "zoompan=z='min(zoom+0.0005,1.03)':d=1800:s=1920x1080:fps=30,"
+        "zoompan="
+        "z='min(zoom+0.0006,1.04)':"
+        "x='iw/2-(iw/zoom/2)+sin(on/12)*12':"
+        "y='ih/2-(ih/zoom/2)+sin(on/17)*10':"
+        "d=1800:s=1920x1080:fps=30,"
         "format=yuv420p[v]"
     )
     command = [
@@ -163,3 +192,62 @@ def has_say() -> bool:
 
 def resolve_voice() -> Optional[str]:
     return None
+
+
+def _use_wav2lip() -> bool:
+    return os.getenv("USE_WAV2LIP", "0").lower() in {"1", "true", "yes"}
+
+
+def _wav2lip_ready() -> bool:
+    if not os.path.isdir(WAV2LIP_DIR):
+        return False
+    if not os.path.exists(os.path.join(WAV2LIP_DIR, "inference.py")):
+        return False
+    if not os.path.exists(WAV2LIP_CHECKPOINT):
+        return False
+    if not os.path.exists(WAV2LIP_FACE_MODEL):
+        return False
+    if os.path.getsize(WAV2LIP_CHECKPOINT) < 50_000_000:
+        return False
+    if os.path.getsize(WAV2LIP_FACE_MODEL) < 10_000_000:
+        return False
+    return True
+
+
+def generate_lipsync_video(
+    image_path: str,
+    audio_path: str,
+    output_path: str,
+) -> Tuple[str, Dict[str, str]]:
+    pads = os.getenv("WAV2LIP_PADS", "0,20,0,0")
+    pad_vals = [item.strip() for item in pads.split(",") if item.strip()]
+    if len(pad_vals) != 4:
+        pad_vals = ["0", "20", "0", "0"]
+    command = [
+        "python3",
+        os.path.join(WAV2LIP_DIR, "inference.py"),
+        "--checkpoint_path",
+        WAV2LIP_CHECKPOINT,
+        "--face",
+        image_path,
+        "--audio",
+        audio_path,
+        "--outfile",
+        output_path,
+        "--pads",
+        *pad_vals,
+    ]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = WAV2LIP_DIR + os.pathsep + env.get("PYTHONPATH", "")
+    log_event(LOGGER, "wav2lip_start", output_path=output_path)
+    subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=WAV2LIP_DIR,
+        timeout=300,
+    )
+    log_event(LOGGER, "wav2lip_done", output_path=output_path)
+    return output_path, {"provider": "wav2lip"}

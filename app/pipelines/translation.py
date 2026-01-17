@@ -8,6 +8,7 @@ from app.services.elevenlabs import text_to_speech
 from app.services.free_media import generate_tts_audio
 from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
+from app.utils.voice import get_anchor_gender, select_voice
 
 LOGGER = get_logger("pipelines.translation")
 
@@ -33,7 +34,8 @@ async def run_translation_pipeline(
             if use_free_providers():
                 if translation.notes and "placeholder" in translation.notes.lower():
                     raise RuntimeError("Hindi translation unavailable")
-                voice = os.getenv("LOCAL_HINDI_VOICE", "Lekha")
+                anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
+                voice = select_voice("hi", anchor_gender)
                 audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path, voice=voice)
             else:
                 audio_bytes, audio_meta = await text_to_speech(

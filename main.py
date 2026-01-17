@@ -35,6 +35,10 @@ def main() -> None:
 
     if "job_id" not in st.session_state:
         st.session_state.job_id = None
+    if not st.session_state.job_id:
+        latest = job_manager.get_latest_active_job()
+        if latest:
+            st.session_state.job_id = latest.id
     if st.session_state.job_id:
         _render_progress(job_manager)
         return
@@ -186,6 +190,45 @@ def _inject_theme() -> None:
             background: var(--lm-lime);
             color: var(--lm-ink);
             border: 1px solid rgba(15, 26, 19, 0.1);
+        }
+        .lm-status-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 8px;
+        }
+        .lm-status {
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(15, 26, 19, 0.08);
+            background: #f7f5f0;
+            color: #29332c;
+            width: fit-content;
+            box-shadow: 0 6px 14px rgba(15, 26, 19, 0.08);
+        }
+        .lm-status-done {
+            background: #13804a;
+            color: #ffffff;
+            border-color: rgba(19, 128, 74, 0.4);
+        }
+        .lm-status-pending {
+            background: #fff6e8;
+            color: #8a4f00;
+            border-color: rgba(249, 157, 28, 0.25);
+        }
+        .lm-status-failed {
+            background: #f7d2d2;
+            color: #7a0d0d;
+            border-color: rgba(156, 27, 27, 0.35);
+        }
+        .lm-status-skipped {
+            background: #eef1f6;
+            color: #4b5563;
+            border-color: rgba(75, 85, 99, 0.2);
         }
         [data-testid="stTabs"] [data-baseweb="tab-list"] {
             border-bottom: none;
@@ -403,6 +446,7 @@ def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
     types = {artifact["type"] for artifact in artifacts}
     error_types = {artifact["type"] for artifact in artifacts if artifact["type"].startswith("error_")}
     enabled = _enabled_pipelines_from_artifacts({artifact["type"]: artifact for artifact in artifacts})
+    cards = []
     steps = [
         ("Analysis", {"analysis"}, "error_analysis"),
         ("Video", {"video_branded", "video_raw"}, "error_video"),
@@ -421,7 +465,15 @@ def _render_progress_steps(job_manager: JobManager, job_id: str) -> None:
             status = "done"
         else:
             status = "pending"
-        st.write(f"{label}: {status}")
+        icon = {
+            "done": "✅",
+            "pending": "⏳",
+            "failed": "⚠️",
+            "skipped": "⏭️",
+        }.get(status, "⏳")
+        css_class = f"lm-status lm-status-{status}"
+        cards.append(f"<div class='{css_class}'>{icon} {label}</div>")
+    st.markdown(f"<div class='lm-status-grid'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
 def _render_video_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
@@ -578,6 +630,8 @@ def _read_text(path: str) -> str:
         return ""
     with open(path, "r", encoding="utf-8") as handle:
         return handle.read()
+
+
 
 
 def _write_text(path: str, content: str) -> None:

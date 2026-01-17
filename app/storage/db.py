@@ -115,4 +115,15 @@ def fetch_artifacts(job_id: str) -> list[sqlite3.Row]:
     return rows
 
 
+def fetch_latest_active_job() -> sqlite3.Row | None:
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM jobs WHERE status IN ('queued','running','generating') ORDER BY started_at DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
 init_db()

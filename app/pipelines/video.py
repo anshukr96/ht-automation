@@ -11,6 +11,7 @@ from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import overlay_logo
 from app.utils.retry import async_retry
+from app.utils.voice import get_anchor_gender, select_voice
 
 LOGGER = get_logger("pipelines.video")
 
@@ -32,7 +33,8 @@ async def run_video_pipeline(
     video_path = os.path.join(output_dir, f"{job_id}_video_raw.mp4")
     if use_free_providers():
         avatar_path = os.getenv("HT_AVATAR_PATH")
-        voice = os.getenv("LOCAL_TTS_VOICE", "Aman")
+        anchor_gender = get_anchor_gender(avatar_path)
+        voice = select_voice("en", anchor_gender)
         log_event(
             LOGGER,
             "video_free_mode",

@@ -6,6 +6,8 @@ app/storage/ht_content.db
 *.aiff
 *.mp3
 *.mp4
+.env
+.DS_Store
 tools/
 tools/wav2lip/checkpoints/*.pth
 tools/wav2lip/face_detection/detection/sfd/*.pth

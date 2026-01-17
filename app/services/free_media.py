@@ -1,9 +1,13 @@
+import asyncio
+import threading
 import os
 import subprocess
+import sys
 import tempfile
 from typing import Dict, Optional, Tuple
 
 from app.utils.logging import get_logger, log_event
+from app.services.decart import decart_available, decart_capabilities, generate_lipsync_video as decart_lipsync
 from app.utils.media import ffmpeg_available
 
 LOGGER = get_logger("services.free_media")
@@ -93,10 +97,30 @@ def generate_avatar_video(
     avatar_path: str,
     voice: str | None = None,
 ) -> Tuple[str, Dict[str, str]]:
+    wav2lip_error = ""
+    decart_error = ""
     if not ffmpeg_available():
         return generate_placeholder_video(script, output_path, avatar_path=None)
 
     audio_path, audio_meta = generate_tts_audio(script, output_path.replace(".mp4", ".mp3"), voice=voice)
+    decart_only = os.getenv("DECART_ONLY", "1").lower() in {"1", "true", "yes"}
+    caps = decart_capabilities()
+    available = caps["api_key"] and (caps["sdk"] or caps["ws"])
+    log_event(LOGGER, "decart_precheck", **caps, available=available, decart_only=decart_only)
+    if available:
+        try:
+            decart_path = output_path.replace(".mp4", "_decart.mp4")
+            decart_path, decart_meta = asyncio_run(decart_lipsync(avatar_path, audio_path, decart_path))
+            decart_meta.update({"voice": voice or "", **audio_meta, "lipsync": "decart"})
+            return decart_path, decart_meta
+        except Exception as exc:
+            log_event(LOGGER, "decart_failed", error=repr(exc))
+            decart_error = str(exc)
+            if decart_only:
+                raise
+    elif decart_only:
+        raise RuntimeError("Decart is required but not available in this environment.")
+
     if _use_wav2lip() and _wav2lip_ready():
         try:
             wav2lip_path = output_path.replace(".mp4", "_lipsync.mp4")
@@ -105,10 +129,13 @@ def generate_avatar_video(
                 audio_path,
                 wav2lip_path,
             )
-            wav2lip_meta.update({"voice": voice or "", **audio_meta})
+            wav2lip_meta.update({"voice": voice or "", **audio_meta, "lipsync": "wav2lip"})
             return wav2lip_path, wav2lip_meta
         except Exception as exc:
             log_event(LOGGER, "wav2lip_failed", error=str(exc))
+            wav2lip_error = str(exc)
+    else:
+        wav2lip_error = "wav2lip_unavailable"
 
     filter_complex = (
         "[0:v]scale=1920:-1,"
@@ -149,6 +176,9 @@ def generate_avatar_video(
             "provider": "local_avatar",
             "voice": voice or "",
             "audio_path": audio_path,
+            "lipsync": "fallback",
+            "wav2lip_error": wav2lip_error,
+            "decart_error": decart_error,
             **audio_meta,
         }
         return output_path, metadata
@@ -214,6 +244,40 @@ def _wav2lip_ready() -> bool:
     return True
 
 
+def _resolve_wav2lip_python() -> str:
+    override = os.getenv("WAV2LIP_PYTHON")
+    if override:
+        return override
+    venv_python = os.path.join(WAV2LIP_DIR, ".venv", "bin", "python")
+    if os.path.exists(venv_python):
+        return venv_python
+    python310 = "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3"
+    if os.path.exists(python310):
+        return python310
+    return sys.executable
+
+
+def asyncio_run(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    result: dict[str, object] = {}
+
+    def _runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
+
+
 def generate_lipsync_video(
     image_path: str,
     audio_path: str,
@@ -223,8 +287,11 @@ def generate_lipsync_video(
     pad_vals = [item.strip() for item in pads.split(",") if item.strip()]
     if len(pad_vals) != 4:
         pad_vals = ["0", "20", "0", "0"]
+    ext = os.path.splitext(image_path)[1].lower()
+    static_flag = ext in {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    os.makedirs(os.path.join(WAV2LIP_DIR, "temp"), exist_ok=True)
     command = [
-        "python3",
+        _resolve_wav2lip_python(),
         os.path.join(WAV2LIP_DIR, "inference.py"),
         "--checkpoint_path",
         WAV2LIP_CHECKPOINT,
@@ -237,8 +304,12 @@ def generate_lipsync_video(
         "--pads",
         *pad_vals,
     ]
+    if static_flag:
+        command.extend(["--static", "1"])
     env = os.environ.copy()
     env["PYTHONPATH"] = WAV2LIP_DIR + os.pathsep + env.get("PYTHONPATH", "")
+    env.setdefault("NUMBA_CACHE_DIR", tempfile.mkdtemp(prefix="numba_cache_"))
+    env.setdefault("NUMBA_DISABLE_CACHING", "1")
     log_event(LOGGER, "wav2lip_start", output_path=output_path)
     subprocess.run(
         command,

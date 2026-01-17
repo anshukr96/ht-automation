@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 ROOT_DIR = Path(__file__).parent
-DEFAULT_TITLE = "LiveMint Content Multiplier"
+DEFAULT_TITLE = "HTpulse Studio"
 DEMO_ARTICLE_PATH = ROOT_DIR / "app" / "storage" / "demo_article.txt"
 
 try:
@@ -22,6 +22,7 @@ from html import escape
 import urllib.parse
 
 from app.core.job_manager import JobManager
+from app.utils.local_server import ensure_asset_server, get_asset_url
 from app.utils.archive import build_zip
 from app.utils.extract import extract_article_from_url
 from app.utils.validation import ValidationError, validate_article
@@ -30,15 +31,17 @@ from app.utils.validation import ValidationError, validate_article
 def main() -> None:
     st.set_page_config(page_title=DEFAULT_TITLE, layout="wide")
     _inject_theme()
+    ensure_asset_server(ROOT_DIR / "app" / "ui" / "assets")
     job_manager = JobManager()
+    view = _resolve_view()
+    if view == "landing":
+        _render_landing()
+        return
+
     _render_header(job_manager)
 
     if "job_id" not in st.session_state:
         st.session_state.job_id = None
-    if not st.session_state.job_id:
-        latest = job_manager.get_latest_active_job()
-        if latest:
-            st.session_state.job_id = latest.id
     if st.session_state.job_id:
         _render_progress(job_manager)
         return
@@ -52,8 +55,8 @@ def _render_header(job_manager: JobManager) -> None:
         st.markdown(
             """\
             <div class="lm-hero">
-              <div class="lm-kicker">LiveMint AI Studio</div>
-              <h1>Content Multiplier</h1>
+              <div class="lm-kicker">HTpulse Studio</div>
+              <h1>HTpulse Studio</h1>
               <p>Turn one story into a full distribution pack in minutes — video, audio, social, Hindi, SEO, QA.</p>
             </div>
             """,
@@ -65,6 +68,15 @@ def _render_header(job_manager: JobManager) -> None:
             if st.button("Run Demo Article"):
                 _run_demo(job_manager)
             st.markdown("</div>", unsafe_allow_html=True)
+    did_source_url = os.getenv("DID_SOURCE_URL", "")
+    if not did_source_url:
+        local_url = get_asset_url("lm-anchor.webp")
+        if local_url:
+            st.info(
+                f"D-ID needs a public avatar URL. Local preview: {local_url}. "
+                "Use a tunnel (ngrok) or upload to a public host.",
+                icon="ℹ️",
+            )
 
 
 def _inject_theme() -> None:
@@ -74,11 +86,11 @@ def _inject_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Manrope:wght@300;400;500;600;700&display=swap');
         :root {
             --lm-ink: #0f1a13;
-            --lm-green: #1b7b5f;
-            --lm-emerald: #0d5c46;
-            --lm-lime: #ffd6a0;
-            --lm-cream: #f6f3ed;
-            --lm-gold: #f99d1c;
+            --lm-green: #1d4ed8;
+            --lm-emerald: #1e40af;
+            --lm-lime: #dbeafe;
+            --lm-cream: #eff6ff;
+            --lm-gold: #2563eb;
             --lm-slate: #3b4b40;
             --lm-surface: #ffffff;
             --lm-surface-alt: #f7f5f0;
@@ -115,6 +127,20 @@ def _inject_theme() -> None:
             align-items: flex-start;
             height: 100%;
             padding-top: 18px;
+        }
+        .lm-hero-action .stButton > button {
+            background: var(--lm-gold);
+            color: #fff;
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-weight: 600;
+        }
+        .stButton > button {
+            background: var(--lm-gold);
+            color: #fff;
+            border-radius: 999px;
+            padding: 8px 18px;
+            font-weight: 600;
         }
         .lm-tip {
             margin-top: 8px;
@@ -162,18 +188,9 @@ def _inject_theme() -> None:
             padding: 16px;
             box-shadow: 0 14px 30px rgba(15, 26, 19, 0.06);
         }
-        .stButton > button {
-            border-radius: 999px;
-            background: linear-gradient(135deg, #d98512, #f99d1c);
-            color: #1a1a1a;
-            border: none;
-            padding: 0.6rem 1.3rem;
-            font-weight: 600;
-            box-shadow: 0 10px 18px rgba(27, 123, 95, 0.18);
-        }
         .stButton > button:hover {
-            background: linear-gradient(135deg, #c7750f, #e89117);
-            color: #111111;
+            background: var(--lm-emerald);
+            color: #fff;
         }
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, var(--lm-cream) 0%, var(--lm-surface) 100%);
@@ -235,6 +252,11 @@ def _inject_theme() -> None:
         }
         .stProgress > div > div {
             background-image: linear-gradient(90deg, var(--lm-green), var(--lm-gold));
+        }
+        .stVideo video {
+            max-height: 600px;
+            width: 100%;
+            object-fit: contain;
         }
         @media (prefers-color-scheme: dark) {
             :root {
@@ -358,6 +380,26 @@ def _render_input(job_manager: JobManager) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_landing() -> None:
+    st.session_state.job_id = None
+    landing_path = ROOT_DIR / "app" / "ui" / "landing.html"
+    if landing_path.exists():
+        components.html(landing_path.read_text(encoding="utf-8"), height=2200, scrolling=True)
+    # Landing page stays focused on the core content.
+
+
+def _resolve_view() -> str:
+    if "view" not in st.session_state:
+        st.session_state.view = "landing"
+    try:
+        app_param = st.query_params.get("app", "")
+    except Exception:
+        app_param = st.experimental_get_query_params().get("app", [""])[0]
+    if app_param:
+        st.session_state.view = "app"
+    return st.session_state.view
+
+
 def _render_progress(job_manager: JobManager) -> None:
     job_id = st.session_state.job_id
     if not job_id:
@@ -369,6 +411,7 @@ def _render_progress(job_manager: JobManager) -> None:
         st.session_state.job_id = None
         return
 
+    components.html("<script>window.scrollTo(0, 0);</script>", height=0)
     st.subheader("Generating Content Package")
     st.progress(job.progress)
     st.write(f"Status: {job.status}")
@@ -481,6 +524,9 @@ def _render_video_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     if not video:
         st.info("Video not available yet.")
         return
+    meta = video.get("metadata", {})
+    if meta.get("lipsync") == "fallback":
+        st.warning("Lip-sync not available; showing motion fallback. Check Wav2Lip setup.")
     if video["path"].endswith(".mp4") and os.path.exists(video["path"]):
         st.video(video["path"])
         st.download_button("Download Video", _read_bytes(video["path"]), file_name=os.path.basename(video["path"]))
@@ -566,7 +612,8 @@ def _render_hindi_tab(job_id: str, artifacts: Dict[str, Any]) -> None:
     if not translation:
         st.info("Hindi translation not available yet.")
         return
-    content = _read_text(translation["path"])
+    raw_content = _read_text(translation["path"])
+    content = _extract_json_field(raw_content, "hindi_text") or raw_content
     st.text_area("Hindi translation", value=content, height=240, key=f"hindi_{job_id}")
     st.download_button(
         "Download Hindi",
@@ -646,6 +693,24 @@ def _safe_json_loads(raw: str) -> Dict[str, Any] | None:
         return json.loads(raw)
     except json.JSONDecodeError:
         return None
+
+
+def _extract_json_field(raw: str, field: str) -> str | None:
+    parsed = _safe_json_loads(raw)
+    if isinstance(parsed, dict) and field in parsed:
+        return str(parsed.get(field) or "").strip()
+    pattern = rf'"{re.escape(field)}"\\s*:\\s*"(.+?)"'
+    match = re.search(pattern, raw, re.DOTALL)
+    if not match:
+        pattern = rf"'{re.escape(field)}'\\s*:\\s*'(.+?)'"
+        match = re.search(pattern, raw, re.DOTALL)
+        if not match:
+            return None
+    snippet = match.group(1)
+    try:
+        return json.loads(f"\"{snippet}\"")
+    except json.JSONDecodeError:
+        return snippet.replace("\\n", "\n").replace("\\\"", "\"").replace("\\'", "'").strip()
 
 
 def _coerce_list(items: Any) -> list[str]:

@@ -179,6 +179,24 @@ def _fallback_seo(analysis: AnalysisResult) -> SEOReport:
     )
 
 
+def _fallback_analysis(article_text: str) -> AnalysisResult:
+    lines = [line.strip() for line in article_text.splitlines() if line.strip()]
+    headline = lines[0] if lines else "HT Update"
+    body = " ".join(lines[1:]) if len(lines) > 1 else ""
+    sentences = re.split(r"(?<=[.!?])\\s+", body)
+    facts = [sentence.strip() for sentence in sentences if sentence.strip()][:5]
+    entities = re.findall(r"\\b[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\b", article_text)
+    return AnalysisResult(
+        headline=headline,
+        category="News",
+        tone="neutral",
+        facts=facts,
+        quotes=[],
+        entities=list(dict.fromkeys(entities))[:10],
+        narrative_arc={"setup": "", "conflict": "", "resolution": ""},
+    )
+
+
 async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, Any]]:
     prompt = (
         "Analyze this news article and extract:\n"
@@ -199,7 +217,12 @@ async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, 
     try:
         data = _extract_json(text)
     except Exception:
-        data = await _repair_json(text)
+        try:
+            data = await _repair_json(text)
+        except Exception as exc:
+            log_event(LOGGER, "analysis_repair_failed", error=str(exc))
+            analysis = _fallback_analysis(article_text)
+            return analysis, {**metadata, "warning": "fallback_analysis"}
     analysis = _validate_analysis(data)
     if not analysis.facts or not analysis.entities:
         repair_prompt = (
@@ -222,12 +245,12 @@ async def analyze_content(article_text: str) -> Tuple[AnalysisResult, Dict[str, 
 
 async def generate_video_script(analysis: AnalysisResult, *, style_variant: int = 0) -> Tuple[str, Dict[str, Any]]:
     prompt = (
-        "Write a 3-minute news anchor script for a video segment.\n\n"
+        "Write a 60-second news anchor script for a video segment.\n\n"
         f"Source: {analysis.headline} - {analysis.category}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
         "Requirements:\n"
-        "- 420-520 words (3+ minutes at 140-160 wpm)\n"
+        "- 130-170 words (60 seconds at 130-170 wpm)\n"
         "- Professional, confident anchor voice\n"
         "- No section labels like Hook/Body/Conclusion\n"
         "- No stage directions, just spoken narration\n"
@@ -241,9 +264,9 @@ async def generate_video_script(analysis: AnalysisResult, *, style_variant: int 
         temperature=0.3,
         system="You are a live news anchor. Output plain narration only.",
     )
-    if len(script.split()) < 420:
+    if len(script.split()) < 130:
         expand_prompt = (
-            "Expand this news anchor script to 420-520 words. "
+            "Expand this news anchor script to 130-170 words. "
             "Keep it in a natural, spoken-news style. "
             "No labels or stage directions.\n\n"
             f"Script:\n{script}"

@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTpulse Studio | LiveMint-Style Content Engine</title>
+  <meta name="description" content="Transform one news article into 15+ distribution-ready formats in under 2 minutes. Video, audio, social, Hindi, SEO, and QA in a single workflow.">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Source+Sans+3:wght@400;600;700&display=swap');
+    :root {
+      --mint-orange: #2563eb;
+      --mint-orange-dark: #1e40af;
+      --mint-ink: #101418;
+      --mint-slate: #4b5563;
+      --mint-bg: #ffffff;
+      --mint-line: #e7e7e7;
+      --mint-soft: #eff6ff;
+      --mint-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Source Sans 3', sans-serif;
+      color: var(--mint-ink);
+      background: var(--mint-bg);
+    }
+    header, section, footer { padding: 56px 7vw; }
+    header {
+      border-bottom: 1px solid var(--mint-line);
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 20;
+    }
+    h1, h2, h3 { font-family: 'Libre Baskerville', serif; margin: 0 0 12px; }
+    p { margin: 0 0 16px; color: var(--mint-slate); line-height: 1.6; }
+    a { color: inherit; }
+    .masthead {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+    }
+    .brand {
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      font-size: 18px;
+      text-transform: uppercase;
+      color: var(--mint-orange);
+    }
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      font-size: 0.95rem;
+      color: var(--mint-slate);
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 48px;
+      align-items: center;
+      background: linear-gradient(120deg, #fff 0%, #fff8ec 70%);
+      border-bottom: 1px solid var(--mint-line);
+    }
+    .hero-title {
+      font-size: clamp(2.4rem, 3.4vw, 3.6rem);
+      line-height: 1.08;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      font-size: 0.75rem;
+      color: var(--mint-orange-dark);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .cta-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+    .cta-primary, .cta-secondary {
+      padding: 12px 22px;
+      border-radius: 999px;
+      text-decoration: none;
+      font-weight: 700;
+      border: 1px solid var(--mint-orange);
+    }
+    .cta-primary {
+      background: var(--mint-orange);
+      color: #fff;
+    }
+    .cta-secondary {
+      color: var(--mint-orange-dark);
+      background: transparent;
+    }
+    .hero-card {
+      background: #fff;
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: var(--mint-shadow);
+      border: 1px solid #f1f1f1;
+    }
+    .hero-card h3 { margin-bottom: 8px; }
+    .hero-art {
+      display: grid;
+      gap: 16px;
+    }
+    .hero-photo {
+      width: 100%;
+      border-radius: 22px;
+      display: block;
+      border: 1px solid #f1f1f1;
+      box-shadow: var(--mint-shadow);
+    }
+    .hero-illustration {
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid #f1f1f1;
+      box-shadow: var(--mint-shadow);
+      background: #fff;
+      padding: 16px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .stat {
+      padding: 12px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--mint-line);
+      background: #fff;
+    }
+    .stat strong { display: block; font-size: 1.2rem; color: var(--mint-ink); }
+    .section-title { max-width: 720px; }
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+    }
+    .card {
+      border: 1px solid var(--mint-line);
+      border-radius: 18px;
+      padding: 20px;
+      background: #fff;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+    }
+    .card h3 { margin-bottom: 8px; }
+    .impact-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 18px;
+      margin-top: 24px;
+    }
+    .impact {
+      border-radius: 16px;
+      padding: 18px;
+      background: var(--mint-soft);
+      border: 1px solid #f5d7a9;
+    }
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .step {
+      border-left: 4px solid var(--mint-orange);
+      padding-left: 12px;
+    }
+    .testimonial {
+      border-radius: 16px;
+      padding: 18px;
+      border: 1px solid var(--mint-line);
+      background: #fff;
+      font-style: italic;
+      box-shadow: var(--mint-shadow);
+    }
+    .cta-banner {
+      background: #fff7ea;
+      border: 1px solid #f6d39a;
+      border-radius: 20px;
+      padding: 28px;
+      display: grid;
+      gap: 8px;
+    }
+    footer {
+      border-top: 1px solid var(--mint-line);
+      font-size: 0.9rem;
+      color: var(--mint-slate);
+    }
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="masthead">
+      <div>
+        <div class="brand">HTpulse Studio</div>
+      </div>
+      <nav class="nav-links">
+        <a href="#problem">Problem</a>
+        <a href="#features">Features</a>
+        <a href="#impact">Impact</a>
+        <a href="#cta">Demo</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero" id="top">
+    <div>
+      <div class="eyebrow">Editorial-grade automation</div>
+      <h1 class="hero-title">Multiply newsroom output instantly with a LiveMint-grade AI production desk.</h1>
+      <p>HTpulse Studio turns a single article into 15+ ready-to-publish formats in under 2 minutes, while preserving editorial tone, compliance, and audience relevance.</p>
+      <div class="cta-row">
+        <a class="cta-primary" href="/?app=1">Generate Content Package</a>
+        <a class="cta-secondary" href="#features">Learn More</a>
+      </div>
+      <div class="stats-row">
+        <div class="stat"><strong>300x faster</strong>From 10 hours to 2 minutes.</div>
+        <div class="stat"><strong>97% cost drop</strong>₹15,000 to ~₹500.</div>
+        <div class="stat"><strong>10x reach</strong>Every audience, every format.</div>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img class="hero-photo" src="assets/newsroom.jpg" alt="Newsroom editorial team" onerror="this.style.display='none';">
+      <div class="hero-illustration">
+        <svg viewBox="0 0 520 420" width="100%" height="100%" role="img" aria-label="Newsroom analytics illustration">
+        <defs>
+          <linearGradient id="mintGlow" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#2563eb" stop-opacity="0.85" />
+            <stop offset="100%" stop-color="#ffd8a6" stop-opacity="0.55" />
+          </linearGradient>
+        </defs>
+        <rect x="8" y="8" width="504" height="404" rx="24" fill="#fff" stroke="#f0f0f0" />
+        <rect x="32" y="36" width="220" height="140" rx="18" fill="url(#mintGlow)" />
+        <rect x="270" y="36" width="210" height="80" rx="14" fill="#f8f8f8" stroke="#e4e4e4" />
+        <rect x="270" y="132" width="210" height="44" rx="12" fill="#fff" stroke="#e4e4e4" />
+        <rect x="32" y="200" width="448" height="54" rx="16" fill="#fff" stroke="#e4e4e4" />
+        <rect x="32" y="270" width="210" height="110" rx="16" fill="#fff" stroke="#e4e4e4" />
+        <rect x="262" y="270" width="218" height="110" rx="16" fill="#fff" stroke="#e4e4e4" />
+        <circle cx="430" cy="82" r="18" fill="#2563eb" />
+        <path d="M60 235 L120 225 L160 238 L220 210" stroke="#2563eb" stroke-width="6" fill="none" stroke-linecap="round" />
+        <path d="M290 326 L330 310 L370 330 L420 300" stroke="#1f2937" stroke-width="5" fill="none" stroke-linecap="round" />
+        <rect x="60" y="70" width="120" height="10" rx="5" fill="#fff" opacity="0.9" />
+        <rect x="60" y="90" width="150" height="10" rx="5" fill="#fff" opacity="0.8" />
+        </svg>
+      </div>
+      <div class="hero-card">
+        <h3>Live production snapshot</h3>
+        <p>Claude analysis in progress. Video, audio, social, Hindi, SEO, and QA pipelines running in parallel with real-time status tracking.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="problem">
+    <div class="section-title">
+      <h2>The problem: content teams can’t out-scale demand</h2>
+      <p>Traditional multi-format production takes 10+ hours and ~₹15,000 per story. HT publishes 100+ articles daily, yet only 5–10 make it to video. The audience gap grows every day.</p>
+    </div>
+    <div class="workflow">
+      <div class="step"><strong>Manual bottlenecks</strong><p>Specialists required for video, audio, and social.</p></div>
+      <div class="step"><strong>Slow handoffs</strong><p>Time lost across scripts, edits, and approvals.</p></div>
+      <div class="step"><strong>Missed audiences</strong><p>Video, podcast, and social viewers never see the story.</p></div>
+    </div>
+  </section>
+
+  <section id="solution">
+    <div class="section-title">
+      <h2>The solution: HTpulse Studio</h2>
+      <p>Paste any article or URL. In under 2 minutes, the platform generates a complete distribution pack with editorial safeguards, consistent tone, and publish-ready outputs.</p>
+    </div>
+    <div class="workflow">
+      <div class="step"><strong>Analyze</strong><p>Claude extracts headline, facts, quotes, and narrative arc.</p></div>
+      <div class="step"><strong>Generate</strong><p>Parallel pipelines create video, audio, social, Hindi, SEO, and QA.</p></div>
+      <div class="step"><strong>Publish</strong><p>Teams approve and schedule content immediately.</p></div>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>Features & benefits</h2>
+    <div class="card-grid">
+      <article class="card"><h3>AI video anchor</h3><p>60-second news video script and anchor-ready output with lip-sync support.</p></article>
+      <article class="card"><h3>Podcast + show notes</h3><p>3–5 minute briefing with clean narration and timestamps.</p></article>
+      <article class="card"><h3>Social formats</h3><p>LinkedIn, Twitter, Instagram, Facebook, and WhatsApp outputs.</p></article>
+      <article class="card"><h3>Hindi translation</h3><p>Full Hindi article and voiceover for regional audiences.</p></article>
+      <article class="card"><h3>SEO pack</h3><p>Headlines, meta descriptions, FAQs, and keyword suggestions.</p></article>
+      <article class="card"><h3>Quality assurance</h3><p>Fact-check signals, compliance checks, and clarity scoring.</p></article>
+    </div>
+  </section>
+
+  <section id="impact">
+    <h2>Impact at scale</h2>
+    <div class="impact-grid">
+      <div class="impact"><strong>300x faster</strong><p>10 hours → 2 minutes.</p></div>
+      <div class="impact"><strong>97% cost reduction</strong><p>₹15,000 → ~₹500 per package.</p></div>
+      <div class="impact"><strong>10x reach</strong><p>Every audience, every platform.</p></div>
+      <div class="impact"><strong>₹15L/month savings</strong><p>Estimated newsroom efficiency gain.</p></div>
+      <div class="impact"><strong>+40% SEO growth</strong><p>More visibility, more traffic.</p></div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <h2>Trusted by editorial leaders</h2>
+    <div class="card-grid">
+      <div class="testimonial">“This closes the gap between our written stories and our video audience.”</div>
+      <div class="testimonial">“Editorial quality stays intact while the speed is unmatched.”</div>
+      <div class="testimonial">“The SEO and QA layers make this feel publish-ready.”</div>
+    </div>
+  </section>
+
+  <section id="cta">
+    <div class="cta-banner">
+      <h2>Ready to scale your newsroom?</h2>
+      <p>Launch HTpulse Studio and generate a full distribution pack in minutes.</p>
+      <div class="cta-row">
+        <a class="cta-primary" href="/?app=1">See Demo</a>
+        <a class="cta-secondary" href="#top">Back to top</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    HTpulse Studio · Built for LiveMint-style editorial teams · Demo-ready platform
+  </footer>
+</body>
+</html>

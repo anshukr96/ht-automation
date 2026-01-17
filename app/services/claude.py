@@ -152,13 +152,13 @@ async def generate_video_script(
         return await free_llm.generate_video_script(analysis)
     style_hint = _format_style_guide(style_guide)
     prompt = (
-        "Write a 3-minute news anchor script for a video segment.\n\n"
+        "Write a 60-second news anchor script for a video segment.\n\n"
         f"Source: {analysis.headline} - {analysis.category}\n"
         f"Key Facts: {analysis.facts}\n"
         f"Tone: {analysis.tone}\n\n"
         f"{style_hint}\n"
         "Requirements:\n"
-        "- 420-520 words (3+ minutes at 140-160 wpm)\n"
+        "- 130-170 words (60 seconds at 130-170 wpm)\n"
         "- Professional, confident anchor voice\n"
         "- No section labels like Hook/Body/Conclusion\n"
         "- No stage directions, just spoken narration\n"
@@ -172,9 +172,9 @@ async def generate_video_script(
         temperature=0.3,
         system="You are a live news anchor. Output plain narration only.",
     )
-    if len(script.split()) < 420:
+    if len(script.split()) < 130:
         expand_prompt = (
-            "Expand this news anchor script to 420-520 words. "
+            "Expand this news anchor script to 130-170 words. "
             "Keep it in a natural, spoken-news style. "
             "No labels or stage directions.\n\n"
             f"Script:\n{script}"

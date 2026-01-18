@@ -98,7 +98,7 @@ Tabbed output for:
 
 ## Environment Configuration
 Required keys live in `.env` (not committed):
-- `OLLAMA_MODEL`, `ANTHROPIC_API_KEY`, `DID_API_KEY`, `DID_SOURCE_URL`, `ELEVENLABS_API_KEY`, etc.
+- `OLLAMA_MODEL`, `ANTHROPIC_API_KEY`, `DID_API_KEY`, `DID_SOURCE_URL`, etc.
 
 ## Run Locally
 ```bash

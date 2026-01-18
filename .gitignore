@@ -8,6 +8,8 @@ app/storage/ht_content.db
 *.mp4
 .env
 .DS_Store
+script.md
+scripts2.md
 tools/
 tools/wav2lip/checkpoints/*.pth
 tools/wav2lip/face_detection/detection/sfd/*.pth

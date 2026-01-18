@@ -396,10 +396,15 @@ def _resolve_view() -> str:
         st.session_state.view = "splash"
     try:
         app_param = st.query_params.get("app", "")
+        landing_param = st.query_params.get("landing", "")
     except Exception:
-        app_param = st.experimental_get_query_params().get("app", [""])[0]
+        params = st.experimental_get_query_params()
+        app_param = params.get("app", [""])[0]
+        landing_param = params.get("landing", [""])[0]
     if app_param:
         st.session_state.view = "app"
+    elif landing_param:
+        st.session_state.view = "landing"
     return st.session_state.view
 
 
@@ -435,21 +440,32 @@ def _render_splash() -> None:
         }
         .splash-footer {
             margin-top: 40px;
-            font-size: 0.95rem;
+            font-size: 1.15rem;
             color: var(--lm-slate);
+            font-weight: 500;
+        }
+        .splash-btn {
+            margin-top: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 22px;
+            border-radius: 999px;
+            background: var(--lm-gold);
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
         }
         </style>
         <div class="splash-wrap">
             <div class="splash-sub">HTpulse Studio</div>
             <h1 class="splash-title">HT Content Multiplier AI</h1>
-            <div class="splash-footer">by Anshu Dwivedi (SDE- LM)</div>
+            <div class="splash-footer">Anshu Dwivedi (LM)</div>
+            <a class="splash-btn" href="/?landing=1">Enter Studio</a>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Enter Studio", type="primary"):
-        st.session_state.view = "landing"
-        st.rerun()
 
 
 def _render_progress(job_manager: JobManager) -> None:

@@ -34,6 +34,9 @@ def main() -> None:
     ensure_asset_server(ROOT_DIR / "app" / "ui" / "assets")
     job_manager = JobManager()
     view = _resolve_view()
+    if view == "splash":
+        _render_splash()
+        return
     if view == "landing":
         _render_landing()
         return
@@ -390,7 +393,7 @@ def _render_landing() -> None:
 
 def _resolve_view() -> str:
     if "view" not in st.session_state:
-        st.session_state.view = "landing"
+        st.session_state.view = "splash"
     try:
         app_param = st.query_params.get("app", "")
     except Exception:
@@ -398,6 +401,55 @@ def _resolve_view() -> str:
     if app_param:
         st.session_state.view = "app"
     return st.session_state.view
+
+
+def _render_splash() -> None:
+    st.session_state.job_id = None
+    st.markdown(
+        """\
+        <style>
+        .splash-wrap {
+            min-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 24px;
+            background: radial-gradient(circle at top, rgba(37,99,235,0.18), transparent 55%),
+                        linear-gradient(135deg, rgba(15,23,42,0.04), rgba(59,130,246,0.08));
+            border-radius: 24px;
+            padding: 48px 24px;
+        }
+        .splash-title {
+            font-family: 'Playfair Display', serif;
+            font-size: clamp(2.6rem, 4vw, 3.6rem);
+            color: var(--lm-ink);
+            margin: 0;
+        }
+        .splash-sub {
+            text-transform: uppercase;
+            letter-spacing: 0.24em;
+            font-weight: 600;
+            color: var(--lm-gold);
+            font-size: 0.9rem;
+        }
+        .splash-footer {
+            margin-top: 40px;
+            font-size: 0.95rem;
+            color: var(--lm-slate);
+        }
+        </style>
+        <div class="splash-wrap">
+            <div class="splash-sub">HTpulse Studio</div>
+            <h1 class="splash-title">HT Content Multiplier AI</h1>
+            <div class="splash-footer">by Anshu Dwivedi (SDE- LM)</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Enter Studio", type="primary"):
+        st.session_state.view = "landing"
+        st.rerun()
 
 
 def _render_progress(job_manager: JobManager) -> None:

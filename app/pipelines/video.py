@@ -56,6 +56,10 @@ async def run_video_pipeline(
 
     branded_path = os.path.join(output_dir, f"{job_id}_video_branded.mp4")
     logo_path = os.getenv("HT_LOGO_PATH", "")
+    if logo_path and not os.path.exists(logo_path):
+        fallback_logo = os.path.join(os.path.dirname(__file__), "..", "ui", "assets", "ht-logo.webp")
+        if os.path.exists(fallback_logo):
+            logo_path = fallback_logo
     try:
         await overlay_logo(video_path, branded_path, logo_path or None)
         if os.path.exists(branded_path):

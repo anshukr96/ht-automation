@@ -73,7 +73,7 @@ def _render_header(job_manager: JobManager) -> None:
             st.markdown("</div>", unsafe_allow_html=True)
     did_source_url = os.getenv("DID_SOURCE_URL", "")
     if not did_source_url:
-        local_url = get_asset_url("lm-anchor.webp")
+        local_url = get_asset_url("lm-anchor.png")
         if local_url:
             st.info(
                 f"D-ID needs a public avatar URL. Local preview: {local_url}. "

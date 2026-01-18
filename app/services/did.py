@@ -42,7 +42,14 @@ async def create_talk(script: str, source_url: str | None = None) -> Tuple[str, 
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(f"{DID_BASE_URL}/talks", headers=_headers(), json=payload)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                log_event(
+                    LOGGER,
+                    "did_create_failed",
+                    status=response.status_code,
+                    body=response.text[:500],
+                )
+                response.raise_for_status()
             return response.json()
 
     result = await _create()

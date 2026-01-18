@@ -21,7 +21,10 @@ def ensure_asset_server(asset_dir: Path) -> None:
     handler = lambda *args, **kwargs: SimpleHTTPRequestHandler(  # noqa: E731
         *args, directory=str(asset_dir), **kwargs
     )
-    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    except OSError:
+        return
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _SERVER_STARTED = True

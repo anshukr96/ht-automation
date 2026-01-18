@@ -3,9 +3,7 @@ from typing import Any, Dict, List
 
 from app.core.models import AnalysisResult
 from app.services.claude import generate_podcast_script
-from app.services.elevenlabs import text_to_speech
 from app.services.free_media import generate_tts_audio
-from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.media import create_audiogram
 from app.utils.voice import get_anchor_gender, select_voice
@@ -28,16 +26,10 @@ async def run_audio_pipeline(
     artifacts.append({"type": "audio_script", "path": script_path, "metadata": script_meta})
 
     audio_path = os.path.join(output_dir, f"{job_id}_podcast.mp3")
-    if use_free_providers():
-        anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
-        voice = select_voice("en", anchor_gender)
-        audio_path, audio_meta = generate_tts_audio(script, audio_path, voice=voice)
-        artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
-    else:
-        audio_bytes, audio_meta = await text_to_speech(script)
-        with open(audio_path, "wb") as handle:
-            handle.write(audio_bytes)
-        artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
+    anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
+    voice = select_voice("en", anchor_gender)
+    audio_path, audio_meta = generate_tts_audio(script, audio_path, voice=voice)
+    artifacts.append({"type": "audio", "path": audio_path, "metadata": audio_meta})
 
     audiogram_path = os.path.join(output_dir, f"{job_id}_audiogram.mp4")
     try:

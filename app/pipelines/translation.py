@@ -4,9 +4,7 @@ from typing import Any, Dict, List
 
 from app.core.models import AnalysisResult
 from app.services.claude import generate_translation
-from app.services.elevenlabs import text_to_speech
 from app.services.free_media import generate_tts_audio
-from app.utils.provider import use_free_providers
 from app.utils.logging import get_logger, log_event
 from app.utils.voice import get_anchor_gender, select_voice
 
@@ -28,25 +26,17 @@ async def run_translation_pipeline(
         handle.write(translation.hindi_text)
     artifacts.append({"type": "translation", "path": translation_path, "metadata": meta})
 
-    if os.getenv("ELEVENLABS_HINDI_VOICE_ID") or use_free_providers():
-        try:
-            audio_path = os.path.join(output_dir, f"{job_id}_hindi_voiceover.mp3")
-            if use_free_providers():
-                if translation.notes and "placeholder" in translation.notes.lower():
-                    raise RuntimeError("Hindi translation unavailable")
-                anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
-                voice = select_voice("hi", anchor_gender)
-                audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path, voice=voice)
-            else:
-                audio_bytes, audio_meta = await text_to_speech(
-                    translation.hindi_text, voice_id=os.getenv("ELEVENLABS_HINDI_VOICE_ID")
-                )
-                with open(audio_path, "wb") as handle:
-                    handle.write(audio_bytes)
-            artifacts.append({"type": "translation_audio", "path": audio_path, "metadata": audio_meta})
-        except Exception as exc:
-            log_event(LOGGER, "translation_tts_failed", job_id=job_id, error=str(exc))
-            artifacts.append({"type": "translation_audio", "path": translation_path, "metadata": {"error": str(exc)}})
+    try:
+        audio_path = os.path.join(output_dir, f"{job_id}_hindi_voiceover.mp3")
+        if translation.notes and "placeholder" in translation.notes.lower():
+            raise RuntimeError("Hindi translation unavailable")
+        anchor_gender = get_anchor_gender(os.getenv("HT_AVATAR_PATH"))
+        voice = select_voice("hi", anchor_gender)
+        audio_path, audio_meta = generate_tts_audio(translation.hindi_text, audio_path, voice=voice)
+        artifacts.append({"type": "translation_audio", "path": audio_path, "metadata": audio_meta})
+    except Exception as exc:
+        log_event(LOGGER, "translation_tts_failed", job_id=job_id, error=str(exc))
+        artifacts.append({"type": "translation_audio", "path": translation_path, "metadata": {"error": str(exc)}})
 
     notes_path = os.path.join(output_dir, f"{job_id}_translation_notes.json")
     with open(notes_path, "w", encoding="utf-8") as handle:

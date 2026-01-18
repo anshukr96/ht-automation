@@ -57,7 +57,7 @@ Input → Analysis → Parallel Pipelines → Artifacts → Dashboard
 - Frontend: Streamlit
 - Backend: Python 3.11+ with asyncio orchestration
 - Storage: SQLite + local filesystem artifacts
-- AI Providers: Ollama (local), Anthropic Claude, D-ID
+- AI Providers: Ollama (local),  D-ID
 - Media: FFmpeg
 - Networking: httpx with retries and timeouts
 
